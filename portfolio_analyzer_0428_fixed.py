@@ -227,9 +227,9 @@ with tabs[0]:
 # ─── Portfolio Analyzer Tab ──────────────────────────────────────────────
 with tabs[1]:
     st.header("Portfolio Analyzer")
-   hold = st.file_uploader("Holdings (Excel)", type=['xls', 'xlsx'], key="pa_hold")
-nse = st.file_uploader("NSE Map", accept_multiple_files=False, type=['csv'], key="pa_nse")
-bse = st.file_uploader("BSE Map", accept_multiple_files=False, type=['csv'], key="pa_bse")
+    hold = st.file_uploader("Holdings (Excel)", type=['xls', 'xlsx'], key="pa_hold")
+    nse = st.file_uploader("NSE Map", accept_multiple_files=False, type=['csv'], key="pa_nse")
+    bse = st.file_uploader("BSE Map", accept_multiple_files=False, type=['csv'], key="pa_bse")
 
     if hold and nse and bse:
         try:
