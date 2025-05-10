@@ -227,15 +227,43 @@ with tabs[0]:
 # ─── Portfolio Analyzer Tab ──────────────────────────────────────────────
 with tabs[1]:
     st.header("Portfolio Analyzer")
-    hold = st.file_uploader("Holdings (Excel)", type=["xls","xlsx"], key="pa_hold")
-    nse = st.file_uploader("NSE Map (CSV)", type=["csv"], key="pa_nse")
-    bse = st.file_uploader("BSE Map (CSV)", type=["csv"], key="pa_bse")
+   hold = st.file_uploader("Holdings (Excel)", type=['xls', 'xlsx'], key="pa_hold")
+nse = st.file_uploader("NSE Map", accept_multiple_files=False, type=['csv'], key="pa_nse")
+bse = st.file_uploader("BSE Map", accept_multiple_files=False, type=['csv'], key="pa_bse")
 
     if hold and nse and bse:
         try:
+            # Validate file extensions
+            if not hold.name.lower().endswith(('.xls', '.xlsx')):
+                st.error("Holdings file must be an Excel file (.xls or .xlsx)")
+                st.stop()
+        
+            if not nse.name.lower().endswith('.csv'):
+                st.error("NSE Map file must be a CSV file")
+                st.stop()
+            
+            if not bse.name.lower().endswith('.csv'):
+                st.error("BSE Map file must be a CSV file")
+                st.stop()
+
+             # Try to read the files
             dfh = pd.read_excel(hold)
             dfn = pd.read_csv(nse)
             dfb = pd.read_csv(bse)
+
+            # Validate file contents
+            required_columns = ["ISIN", "Current Qty"]
+            if not all(col in dfh.columns for col in required_columns):
+                st.error(f"Holdings file must contain columns: {', '.join(required_columns)}")
+                st.stop()
+            
+            if "ISIN" not in dfn.columns or "Ticker" not in dfn.columns:
+                st.error("NSE Map file must contain ISIN and Ticker columns")
+                st.stop()
+            
+            if "ISIN" not in dfb.columns or "Ticker" not in dfb.columns:
+                st.error("BSE Map file must contain ISIN and Ticker columns")
+                st.stop()
         except Exception as e:
             st.error(f"Error reading files: {str(e)}")
             st.stop()
