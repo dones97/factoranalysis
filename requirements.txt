@@ -5,3 +5,4 @@ yfinance
 statsmodels
 plotly
 pandas-datareader
+python3-distutils
