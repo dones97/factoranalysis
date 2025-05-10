@@ -6,3 +6,5 @@ statsmodels
 plotly
 pandas-datareader
 setuptools
+openpyxl
+xlrd
