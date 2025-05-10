@@ -23,7 +23,7 @@ def get_risk_free_rate_series(start_date, end_date, default_rate=6.5):
 
 @st.cache_data(ttl=24*3600)
 def fetch_ff_factors(start_date, end_date):
-    df = yf.download("^CRSLDX", start=start_date, end=end_date, progress=False)
+    df = yf.download("^CRSLDX", start=start_date, end=end_date, progress=False, auto_adjust=False)
     if df.empty:
         return None
     if isinstance(df.columns, pd.MultiIndex):
@@ -43,7 +43,7 @@ def fetch_ff_factors(start_date, end_date):
 def fetch_price_df(ticker, start_date, end_date):
     if not ticker or pd.isna(ticker):
         return None
-    df = yf.download(ticker.strip().upper(), start=start_date, end=end_date, progress=False)
+    df = yf.download(ticker.strip().upper(), start=start_date, end=end_date, progress=False, auto_adjust=False)
     if df.empty:
         return None
     if isinstance(df.columns, pd.MultiIndex):
@@ -184,7 +184,7 @@ def compute_portfolio_regression_metrics(df, sd, ed, ff):
         "Model": m,
     }
 
-# ─────────────────────────────────────────────────────────────────────────
+# ─── Main App Tabs ───────────────────────────────────────────────────────
 tabs = st.tabs(["Stock Analyzer", "Portfolio Analyzer"])
 
 # ─── Stock Analyzer Tab ─────────────────────────────────────────────────
@@ -228,37 +228,45 @@ with tabs[0]:
 with tabs[1]:
     st.header("Portfolio Analyzer")
     hold = st.file_uploader("Holdings (Excel)", type=["xls","xlsx"], key="pa_hold")
-    nse = st.file_uploader("NSE Map (CSV)", type="csv", key="pa_nse")
-    bse = st.file_uploader("BSE Map (CSV)", type="csv", key="pa_bse")
+    nse = st.file_uploader("NSE Map (CSV)", type=["csv"], key="pa_nse")
+    bse = st.file_uploader("BSE Map (CSV)", type=["csv"], key="pa_bse")
 
     if hold and nse and bse:
-        if "base_df" not in st.session_state or st.session_state["base_src"] != hold.name:
+        try:
             dfh = pd.read_excel(hold)
             dfn = pd.read_csv(nse)
             dfb = pd.read_csv(bse)
+        except Exception as e:
+            st.error(f"Error reading files: {str(e)}")
+            st.stop()
 
-            dfn["Ticker"] = dfn["Ticker"].astype(str).str.strip().str.upper()
-            dfn["DisplayTicker"] = dfn["Ticker"]
-            dfn["Ticker"] = dfn["Ticker"].apply(lambda x: x if x.endswith(".NS") else x + ".NS")
+        if "base_df" not in st.session_state or st.session_state["base_src"] != hold.name:
+            try:
+                dfn["Ticker"] = dfn["Ticker"].astype(str).str.strip().str.upper()
+                dfn["DisplayTicker"] = dfn["Ticker"]
+                dfn["Ticker"] = dfn["Ticker"].apply(lambda x: x if x.endswith(".NS") else x + ".NS")
 
-            dfb["Ticker"] = dfb["Ticker"].astype(str).str.strip().str.upper()
-            dfb["DisplayTicker"] = dfb["TckrSymb"].astype(str).str.strip()
-            dfb["Ticker"] = dfb["Ticker"].apply(lambda x: x if x.endswith(".BO") else x + ".BO")
+                dfb["Ticker"] = dfb["Ticker"].astype(str).str.strip().str.upper()
+                dfb["DisplayTicker"] = dfb["TckrSymb"].astype(str).str.strip()
+                dfb["Ticker"] = dfb["Ticker"].apply(lambda x: x if x.endswith(".BO") else x + ".BO")
 
-            mapping_df = pd.concat([
-                dfn[["ISIN","Ticker","DisplayTicker"]],
-                dfb[["ISIN","Ticker","DisplayTicker"]]
-            ], ignore_index=True).drop_duplicates("ISIN")
+                mapping_df = pd.concat([
+                    dfn[["ISIN","Ticker","DisplayTicker"]],
+                    dfb[["ISIN","Ticker","DisplayTicker"]]
+                ], ignore_index=True).drop_duplicates("ISIN")
 
-            merged = pd.merge(dfh, mapping_df, on="ISIN", how="left")
-            merged["Ticker"] = merged["Ticker"].fillna("").str.upper()
-            merged["DisplayTicker"] = merged["DisplayTicker"].fillna(merged["Ticker"])
+                merged = pd.merge(dfh, mapping_df, on="ISIN", how="left")
+                merged["Ticker"] = merged["Ticker"].fillna("").str.upper()
+                merged["DisplayTicker"] = merged["DisplayTicker"].fillna(merged["Ticker"])
 
-            st.session_state["base_df"] = merged[["Ticker","DisplayTicker","Current Qty"]].rename(
-                columns={"Current Qty":"Quantity"}
-            )
-            st.session_state["changes_df"] = pd.DataFrame(columns=["Action","Ticker","Quantity"])
-            st.session_state["base_src"] = hold.name
+                st.session_state["base_df"] = merged[["Ticker","DisplayTicker","Current Qty"]].rename(
+                    columns={"Current Qty":"Quantity"}
+                )
+                st.session_state["changes_df"] = pd.DataFrame(columns=["Action","Ticker","Quantity"])
+                st.session_state["base_src"] = hold.name
+            except Exception as e:
+                st.error(f"Error processing files: {str(e)}")
+                st.stop()
 
         base_df = st.session_state["base_df"]
         display_map = dict(zip(base_df["Ticker"], base_df["DisplayTicker"]))
