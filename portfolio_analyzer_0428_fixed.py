@@ -228,20 +228,20 @@ with tabs[0]:
 with tabs[1]:
     st.header("Portfolio Analyzer")
     hold = st.file_uploader("Holdings (Excel)", type=['xls', 'xlsx'], key="pa_hold")
-    nse = st.file_uploader("NSE Map (CSV)", type=["csv"], key="pa_nse")
-    bse = st.file_uploader("BSE Map (CSV)", type=["csv"], key="pa_bse")
+    nse = st.file_uploader("NSE Map (CSV)", key="pa_nse")
+    bse = st.file_uploader("BSE Map (CSV)", key="pa_bse")
     if hold and nse and bse:
         try:
             # Validate file extensions
-            if hold is not None and not hold.name.lower().endswith(('.xls', '.xlsx')):
+            if hold is not None and not hold.name.lower().endswith((".xls", ".xlsx")):
                 st.error("Holdings file must be an Excel file (.xls or .xlsx)")
                 st.stop()
         
-            if nse is not None and not nse.name.lower().endswith('.csv'):
+            if nse is not None and not nse.name.lower().endswith(".csv"):
                 st.error("NSE Map file must be a CSV file")
                 st.stop()
             
-            if bse is not None and not bse.name.lower().endswith('.csv'):
+            if bse is not None and not bse.name.lower().endswith(".csv"):
                 st.error("BSE Map file must be a CSV file")
                 st.stop()
 
