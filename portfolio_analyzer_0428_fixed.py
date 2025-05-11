@@ -61,6 +61,17 @@ def weekly_returns(ticker, start_date, end_date):
         return None
     return df["Close"].resample("W-FRI").last().pct_change().dropna()
 
+@st.cache_data
+def get_sector_info(ticker):
+    info = yf.Ticker(ticker).info
+    sector = info.get("sector", None)
+    if sector and sector.lower() != 'unknown':
+        return sector
+    industry = info.get("industry", None)
+    if industry:
+        return industry
+    return "Unknown"
+
 # ─── Stock‐Level Regression & Metrics ───────────────────────────────────
 def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
     wr = weekly_returns(tkr, sd, ed)
@@ -138,17 +149,6 @@ def compute_portfolio_std_from_cov(df, sd, ed):
     cov = wr_df.cov().values
     w_arr = (mv_by / mv_by.sum()).reindex(wr_df.columns).fillna(0).values
     return np.sqrt(w_arr @ cov @ w_arr) * np.sqrt(52)
-
-@st.cache_data
-def get_sector_info(ticker):
-    info = yf.Ticker(ticker).info
-    sector = info.get("sector", None)
-    if sector and sector.lower() != 'unknown':
-        return sector
-    industry = info.get("industry", None)
-    if industry:
-        return industry
-    return "Unknown"
 
 def compute_portfolio_regression_metrics(df, sd, ed, ff):
     rf = get_risk_free_rate_series(sd, ed, default_rate=st.session_state["current_rf"])
