@@ -470,7 +470,7 @@ with tabs[1]:
             market_annual_std = market_weekly_std * np.sqrt(52)
             beta_base = base_rmet["Betas"].get("Mkt-RF", 0)
             sys_risk = beta_base * market_annual_std
-            fig.add_trace(go.Bar(name="Market Risk", x=["Std Dev"], y=[sys_risk*100],
+            fig.add_trace(go.Bar(name="Undiversifiable Risk", x=["Std Dev"], y=[sys_risk*100],
                                  text=[f"{sys_risk*100:.2f}%"], textposition="outside"))
             fig.update_layout(barmode="group", yaxis_title="Std Dev (%)")
             st.plotly_chart(fig, use_container_width=True, key="div_benefit")
