@@ -370,8 +370,8 @@ with tabs[1]:
             st.subheader("Portfolio Metrics Comparison")
             wdisp = pd.DataFrame([
                 {"Base":f"{base_wret*100:.2f}%","Active":f"{act_wret*100:.2f}%"} if changed else {"Base":f"{base_wret*100:.2f}%","Active":"—"},
-                {"Base":f"{base_wstd*100:.2f}%","Active":f"{act_wstd*100:.2f}%"} if changed else {""},
-                {"Base":f"{(base_wret/base_wstd):.2f}","Active":f"{(act_wret/act_wstd):.2f}"} if changed else {"Base":f"{(base_wret/base_wstd):.2f}%","Active":"—"}
+                {"Base":f"{base_wstd*100:.2f}%","Active":f"{act_wstd*100:.2f}%"} if changed else {"Base":f"{base_wstd*100:.2f}%","Active":"—"},
+                {"Base":f"{(base_wret/base_wstd):.2f}","Active":f"{(act_wret/act_wstd):.2f}"} if changed else {"Base":f"{(base_wret/base_wstd):.2f}","Active":"—"}
             ], index=["Return","Std Dev","Sharpe"])
             st.markdown("**Weighted Approach**"); st.dataframe(wdisp, use_container_width=True, key="wt_cmp")
             rdisp = pd.DataFrame([
