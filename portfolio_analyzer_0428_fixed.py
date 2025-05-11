@@ -238,6 +238,24 @@ with tabs[0]:
 # ─── Portfolio Analyzer Tab ──────────────────────────────────────────────
 with tabs[1]:
     st.header("Portfolio Analyzer")
+
+    import io
+    sample_df = pd.DataFrame({
+        "ISIN": ["INE123A01016", "INE234B01018"],
+        "Current Qty": [100, 250]
+    })
+    excel_buffer = io.BytesIO()
+    sample_df.to_excel(excel_buffer, index=False)
+    excel_buffer.seek(0)
+    st.write("Download a template file to fill in your holdings (ISIN and Current Qty):")
+    st.download_button(
+        label="Download holdings template (Excel)",
+        data=excel_buffer,
+        file_name="holdings_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        help="Download an example template to use for your Holdings upload"
+    )
+    
     hold = st.file_uploader("Holdings (Excel)", type=['xls', 'xlsx'], key="pa_hold")
 
     # Use mapping files from the repo
