@@ -139,6 +139,17 @@ def compute_portfolio_std_from_cov(df, sd, ed):
     w_arr = (mv_by / mv_by.sum()).reindex(wr_df.columns).fillna(0).values
     return np.sqrt(w_arr @ cov @ w_arr) * np.sqrt(52)
 
+@st.cache_data
+def get_sector_info(ticker):
+    info = yf.Ticker(ticker).info
+    sector = info.get("sector", None)
+    if sector and sector.lower() != 'unknown':
+        return sector
+    industry = info.get("industry", None)
+    if industry:
+        return industry
+    return "Unknown"
+
 def compute_portfolio_regression_metrics(df, sd, ed, ff):
     rf = get_risk_free_rate_series(sd, ed, default_rate=st.session_state["current_rf"])
     weekly_rf = (1 + rf) ** (1/52) - 1
@@ -486,13 +497,12 @@ with tabs[1]:
 
             # Sector Exposures Chart
             st.subheader("Sector Exposures (%)")
-            def get_sector(t): return yf.Ticker(t).info.get("sector","Unknown")
             base_sec = base_ind.copy()
-            base_sec["Sector"] = base_sec["Ticker"].map(get_sector)
+            base_sec["Sector"] = base_sec["Ticker"].map(get_sector_info)
             pct_base = 100 * base_sec.groupby("Sector")["MarketValue"].sum() / base_sec["MarketValue"].sum()
             if changed:
                 act_sec = act_ind.copy()
-                act_sec["Sector"] = act_sec["Ticker"].map(get_sector)
+                act_sec["Sector"] = act_sec["Ticker"].map(get_sector_info)
                 pct_act = 100 * act_sec.groupby("Sector")["MarketValue"].sum() / act_sec["MarketValue"].sum()
             else:
                 pct_act = pd.Series(dtype=float)
