@@ -239,38 +239,33 @@ with tabs[0]:
 with tabs[1]:
     st.header("Portfolio Analyzer")
     hold = st.file_uploader("Holdings (Excel)", type=['xls', 'xlsx'], key="pa_hold")
-    nse = st.file_uploader("NSE Map (CSV)", key="pa_nse")
-    bse = st.file_uploader("BSE Map (CSV)", key="pa_bse")
-    if hold and nse and bse:
+
+    # Use mapping files from the repo
+    nse_path = "data/nse_map.csv"
+    bse_path = "data/bse_map.csv"
+
+    if hold:
         try:
             # Validate file extensions
             if hold is not None and not hold.name.lower().endswith((".xls", ".xlsx")):
                 st.error("Holdings file must be an Excel file (.xls or .xlsx)")
                 st.stop()
-        
-            if nse is not None and not nse.name.lower().endswith(".csv"):
-                st.error("NSE Map file must be a CSV file")
-                st.stop()
-            
-            if bse is not None and not bse.name.lower().endswith(".csv"):
-                st.error("BSE Map file must be a CSV file")
-                st.stop()
 
-             # Try to read the files
+            # Try to read the files
             dfh = pd.read_excel(hold)
-            dfn = pd.read_csv(nse)
-            dfb = pd.read_csv(bse)
+            dfn = pd.read_csv(nse_path)
+            dfb = pd.read_csv(bse_path)
 
             # Validate file contents
             required_columns = ["ISIN", "Current Qty"]
             if not all(col in dfh.columns for col in required_columns):
                 st.error(f"Holdings file must contain columns: {', '.join(required_columns)}")
                 st.stop()
-            
+
             if "ISIN" not in dfn.columns or "Ticker" not in dfn.columns:
                 st.error("NSE Map file must contain ISIN and Ticker columns")
                 st.stop()
-            
+
             if "ISIN" not in dfb.columns or "Ticker" not in dfb.columns:
                 st.error("BSE Map file must contain ISIN and Ticker columns")
                 st.stop()
@@ -523,6 +518,5 @@ with tabs[1]:
                 "P-Value": base_rmet["Model"].pvalues.values
             }).round(4)
             st.dataframe(dfb2, use_container_width=True, key="port_betas")
-
     else:
-        st.info("Upload Holdings Excel and NSE/BSE mapping CSVs to begin.")
+        st.info("Upload Holdings Excel to begin. NSE/BSE mapping files are loaded from the repo.")
