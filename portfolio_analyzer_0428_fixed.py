@@ -101,14 +101,14 @@ def get_sector_info(ticker):
     if sector and sector.lower() != 'unknown':
         return sector
     industry = info.get("industry", None)
-    # Try to map industry to sector
-    if industry:
-        return INDUSTRY_TO_SECTOR.get(industry, industry)
-    return "Unknown"
     if industry:
         if industry not in INDUSTRY_TO_SECTOR:
             st.write(f"Unmapped industry: {industry} for ticker {ticker}")
         return INDUSTRY_TO_SECTOR.get(industry, industry)
+    # Try to map industry to sector
+    if industry:
+        return INDUSTRY_TO_SECTOR.get(industry, industry)
+    return "Unknown"
 
 # ---- Stock‐Level Regression & Metrics ----
 def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
