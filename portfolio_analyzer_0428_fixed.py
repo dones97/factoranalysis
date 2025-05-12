@@ -7,11 +7,41 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from pandas_datareader.data import DataReader
+import io
 
 st.set_page_config(layout="wide")
 st.title("Stock & Portfolio Analyzer with Editable Portfolios")
 
-# ─── Utilities ──────────────────────────────────────────────────────────
+# ---- Industry to Sector Mapping for BSE Stocks ----
+INDUSTRY_TO_SECTOR = {
+    "Banks": "Financial Services",
+    "Cement & Cement Products": "Materials",
+    "Auto Ancillaries": "Consumer Cyclical",
+    "Pharmaceuticals & Drugs": "Healthcare",
+    "Finance - NBFC": "Financial Services",
+    "IT Services & Consulting": "Technology",
+    "Power Generation & Distribution": "Utilities",
+    "Construction & Contracting - Civil": "Industrials",
+    "Steel": "Materials",
+    "Paints & Varnishes": "Materials",
+    "Refineries": "Energy",
+    "FMCG": "Consumer Defensive",
+    "Textiles": "Consumer Cyclical",
+    "Trading": "Industrials",
+    "Telecommunications - Service Provider": "Communication Services",
+    "Insurance": "Financial Services",
+    "Real Estate": "Real Estate",
+    "Chemicals": "Materials",
+    "Engineering - Industrial Equipments": "Industrials",
+    "Retailing": "Consumer Cyclical",
+    "Consumer Durables": "Consumer Cyclical",
+    "Mining & Minerals": "Materials",
+    "Transport & Logistics": "Industrials",
+    "Aerospace & Defence": "Industrials",
+    # Add more as you encounter new industries in your portfolios
+}
+
+# ---- Utilities ----
 @st.cache_data(ttl=24*3600)
 def get_risk_free_rate_series(start_date, end_date, default_rate=6.5):
     try:
@@ -68,11 +98,12 @@ def get_sector_info(ticker):
     if sector and sector.lower() != 'unknown':
         return sector
     industry = info.get("industry", None)
+    # Try to map industry to sector
     if industry:
-        return industry
+        return INDUSTRY_TO_SECTOR.get(industry, industry)
     return "Unknown"
 
-# ─── Stock‐Level Regression & Metrics ───────────────────────────────────
+# ---- Stock‐Level Regression & Metrics ----
 def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
     wr = weekly_returns(tkr, sd, ed)
     if wr is None or wr.empty or ff is None or ff.empty:
@@ -108,7 +139,7 @@ def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
         "Adj_R2": round(m.rsquared_adj, 4),
     }
 
-# ─── Return Contribution by Stock Chart ────────────────────────────────
+# ---- Return Contribution by Stock Chart ----
 def plot_return_contributions_by_stock(df, rf_pct, display_map, key):
     tot = df["MarketValue"].sum()
     dfc = df.copy()
@@ -127,7 +158,7 @@ def plot_return_contributions_by_stock(df, rf_pct, display_map, key):
     fig.update_layout(yaxis_title="Contribution (%)", xaxis_title="", showlegend=False)
     st.plotly_chart(fig, use_container_width=True, key=key)
 
-# ─── Portfolio‐Level Metrics ───────────────────────────────────────────
+# ---- Portfolio‐Level Metrics ----
 def compute_weighted_portfolio_metrics(df):
     if "MarketValue" not in df or df["MarketValue"].sum() == 0:
         return None
@@ -195,10 +226,10 @@ def compute_portfolio_regression_metrics(df, sd, ed, ff):
         "Model": m,
     }
 
-# ─── Main App Tabs ───────────────────────────────────────────────────────
+# ---- Main App Tabs ----
 tabs = st.tabs(["Stock Analyzer", "Portfolio Analyzer"])
 
-# ─── Stock Analyzer Tab ─────────────────────────────────────────────────
+# ---- Stock Analyzer Tab ----
 with tabs[0]:
     st.header("Individual Stock Analysis")
     ticker = st.text_input("Ticker", "RELIANCE.NS", key="sa_tkr").strip().upper()
@@ -235,11 +266,11 @@ with tabs[0]:
         st.error("Unable to fetch price/factor data.")
     st.session_state["selected_stock"] = ticker
 
-# ─── Portfolio Analyzer Tab ──────────────────────────────────────────────
+# ---- Portfolio Analyzer Tab ----
 with tabs[1]:
     st.header("Portfolio Analyzer")
 
-    import io
+    # Downloadable template
     sample_df = pd.DataFrame({
         "ISIN": ["INE123A01016", "INE234B01018"],
         "Current Qty": [100, 250]
@@ -255,7 +286,7 @@ with tabs[1]:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         help="Download an example template to use for your Holdings upload"
     )
-    
+
     hold = st.file_uploader("Holdings (Excel)", type=['xls', 'xlsx'], key="pa_hold")
 
     # Use mapping files from the repo
