@@ -20,6 +20,7 @@ INDUSTRY_TO_SECTOR = {
     "Pharmaceuticals & Drugs": "Healthcare",
     "Finance - NBFC": "Financial Services",
     "IT Services & Consulting": "Technology",
+    "Information Technology Services": "Technology",
     "Power Generation & Distribution": "Utilities",
     "Construction & Contracting - Civil": "Industrials",
     "Steel": "Materials",
@@ -38,6 +39,8 @@ INDUSTRY_TO_SECTOR = {
     "Mining & Minerals": "Materials",
     "Transport & Logistics": "Industrials",
     "Aerospace & Defence": "Industrials",
+    "Metal Fabrication": "Industrials",
+    "Specialty Chemicals": "Materials",
     # Add more as you encounter new industries in your portfolios
 }
 
