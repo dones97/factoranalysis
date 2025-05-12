@@ -105,6 +105,10 @@ def get_sector_info(ticker):
     if industry:
         return INDUSTRY_TO_SECTOR.get(industry, industry)
     return "Unknown"
+    if industry:
+        if industry not in INDUSTRY_TO_SECTOR:
+            st.write(f"Unmapped industry: {industry} for ticker {ticker}")
+        return INDUSTRY_TO_SECTOR.get(industry, industry)
 
 # ---- Stock‐Level Regression & Metrics ----
 def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
