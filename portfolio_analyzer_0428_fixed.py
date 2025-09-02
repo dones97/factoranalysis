@@ -546,25 +546,28 @@ with tabs[1]:
             else:
                 st.info("Insufficient data for correlation.")
 
-            # Sector Exposures Chart
-            st.subheader("Sector Exposures (%)")
-            base_sec = base_ind.copy()
-            base_sec["Sector"] = base_sec["Ticker"].map(get_sector_info)
-            pct_base = 100 * base_sec.groupby("Sector")["MarketValue"].sum() / base_sec["MarketValue"].sum()
-            if changed:
-                act_sec = act_ind.copy()
-                act_sec["Sector"] = act_sec["Ticker"].map(get_sector_info)
-                pct_act = 100 * act_sec.groupby("Sector")["MarketValue"].sum() / act_sec["MarketValue"].sum()
+            # Correlation Heatmap
+            st.subheader("Correlation Matrix")
+            rets = {t: weekly_returns(t, sd2, ed2) for t in active["Ticker"]}  
+            rets_df = pd.DataFrame({t: r for t, r in rets.items() if r is not None}).dropna()
+            if not rets_df.empty:
+                corr = rets_df.corr()
+                # Clamp correlations to [-0.5, 0.5]
+                corr_clipped = corr.clip(lower=-0.5, upper=0.5)
+                labels = corr.columns.tolist()
+                disp = [display_map.get(x, x) for x in labels]
+                figc = px.imshow(
+                    corr_clipped,
+                    text_auto=True,
+                    color_continuous_scale=["green","yellow","red"],
+                    zmin=-0.5, zmax=0.5,  # New scale
+                    title="Return Correlation",
+                )
+                figc.update_xaxes(tickmode="array", tickvals=labels, ticktext=disp)
+                figc.update_yaxes(tickmode="array", tickvals=labels, ticktext=disp)
+                st.plotly_chart(figc, use_container_width=True, key="corr")
             else:
-                pct_act = pd.Series(dtype=float)
-            df_sec = pd.DataFrame({"Base": pct_base, "Active": pct_act}).fillna(0).reset_index().rename(columns={"index":"Sector"})
-            fig_sec = px.bar(df_sec, x="Sector", y=["Base","Active"], barmode="group")
-            for trace in fig_sec.data:
-                vals = df_sec[trace.name]
-                trace.text = [f"{v:.1f}%" for v in vals]
-                trace.textposition = "outside"
-            fig_sec.update_layout(yaxis_title="Exposure (%)")
-            st.plotly_chart(fig_sec, use_container_width=True, key="sec_exp")
+                st.info("Insufficient data for correlation.")
 
             # Portfolio Betas (Regression)
             st.subheader("Portfolio Betas (Regression)")
