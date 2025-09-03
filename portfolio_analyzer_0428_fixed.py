@@ -537,21 +537,6 @@ with tabs[1]:
             rets_df = pd.DataFrame({t: r for t, r in rets.items() if r is not None}).dropna()
             if not rets_df.empty:
                 corr = rets_df.corr()
-                labels = corr.columns.tolist()
-                disp = [display_map.get(x, x) for x in labels]
-                figc = px.imshow(corr, text_auto=True, color_continuous_scale=["green","yellow","red"], zmin=-1, zmax=1, title="Return Correlation")
-                figc.update_xaxes(tickmode="array", tickvals=labels, ticktext=disp)
-                figc.update_yaxes(tickmode="array", tickvals=labels, ticktext=disp)
-                st.plotly_chart(figc, use_container_width=True, key="corr")
-            else:
-                st.info("Insufficient data for correlation.")
-
-            # Correlation Heatmap
-            st.subheader("Correlation Matrix")
-            rets = {t: weekly_returns(t, sd2, ed2) for t in active["Ticker"]}  
-            rets_df = pd.DataFrame({t: r for t, r in rets.items() if r is not None}).dropna()
-            if not rets_df.empty:
-                corr = rets_df.corr()
                 # Clamp correlations to [-0.5, 0.5]
                 corr_clipped = corr.clip(lower=-0.5, upper=0.5)
                 labels = corr.columns.tolist()
