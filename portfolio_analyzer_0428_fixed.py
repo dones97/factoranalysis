@@ -150,27 +150,29 @@ def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
 
 def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=300):
     fig = go.Figure()
-    # Draw line
+
+    # Main horizontal bar
     fig.add_shape(type="line",
                   x0=0, x1=1, y0=0, y1=0,
                   line=dict(color="lightgray", width=8))
-    # Points: lower, expected, upper
+
+    # End markers and expected value
     xs = [0, 0.5, 1]
     vals = [lower, value, upper]
     colors = ["#1f77b4", "red", "#1f77b4"]
-    texts = [f"{lower:.2f}{unit}", f"{value:.2f}{unit}", f"{upper:.2f}{unit}"]
-
+    # Only expected value is shown on the scale, ends on top
     fig.add_trace(go.Scatter(
-        x=xs, y=[0]*3,
+        x=xs, y=[0, 0, 0],
         mode="markers+text",
-        marker=dict(color=colors, size=[10,16,10], symbol=["circle","diamond","circle"]),
-        text=texts,
-        textposition=["bottom left", "top center", "bottom right"],
+        marker=dict(color=colors, size=[12,16,12], symbol=["circle","diamond","circle"]),
+        text=[f"{lower:.2f}{unit}", f"{value:.2f}{unit}", f"{upper:.2f}{unit}"],
+        textposition=["top left", "bottom center", "top right"],
         showlegend=False
     ))
+
     fig.update_layout(
         margin=dict(l=0, r=0, t=10, b=0),
-        height=70,
+        height=60,
         width=width,
         xaxis=dict(visible=False),
         yaxis=dict(visible=False),
@@ -269,7 +271,8 @@ def compute_portfolio_regression_metrics(df, sd, ed, ff):
 # ---- Main App Tabs ----
 tabs = st.tabs(["Stock Analyzer", "Portfolio Analyzer"])
 
-# ---- Stock Analyzer Tab ----
+# --- Stock Analyzer Tab ---
+
 with tabs[0]:
     st.header("Individual Stock Analysis")
     ticker = st.text_input("Ticker", "RELIANCE.NS", key="sa_tkr").strip().upper()
@@ -290,39 +293,60 @@ with tabs[0]:
         if met:
             model = met['Model']
             n = len(model.model.endog) if hasattr(model, 'model') else 0
-        
+            rf_val = st.session_state["current_rf"] / 100
+            factor_means = ff.mean()
+            betas = model.params
+
+            # --- Compute Confidence Interval for Expected Annual Return ---
             conf_int = model.conf_int(alpha=0.05)
-            alpha_low = alpha_high = met['Exp_Annual_Rtn']*100
-            if "const" in conf_int.index:
-                alpha_low = conf_int.loc["const", 0] * 52 * 100
-                alpha_high = conf_int.loc["const", 1] * 52 * 100
-        
+            # Get CIs for intercept and all betas
+            alpha_low = conf_int.loc["const", 0] if "const" in conf_int.index else betas.get("const", 0)
+            alpha_high = conf_int.loc["const", 1] if "const" in conf_int.index else betas.get("const", 0)
+            # For each factor, get CI for its beta
+            exp_ret_low = alpha_low
+            exp_ret_high = alpha_high
+            for fac in factor_means.index:
+                if fac in conf_int.index:
+                    exp_ret_low += conf_int.loc[fac, 0] * factor_means[fac]
+                    exp_ret_high += conf_int.loc[fac, 1] * factor_means[fac]
+                else:
+                    exp_ret_low += betas.get(fac, 0) * factor_means[fac]
+                    exp_ret_high += betas.get(fac, 0) * factor_means[fac]
+            # Convert weekly excess return to annual, then add RF
+            exp_ret_low = (1 + exp_ret_low) ** 52 - 1
+            exp_ret_high = (1 + exp_ret_high) ** 52 - 1
+            exp_ret_low = (rf_val + exp_ret_low) * 100
+            exp_ret_high = (rf_val + exp_ret_high) * 100
+            exp_ret = met['Exp_Annual_Rtn'] * 100
+
+            # --- CI for Standard Deviation ---
+            std = met["Annual_Std"] * 100
+            ci_std = (std, std, std)
+            if n > 1:
+                se_std = std / np.sqrt(2 * (n - 1))
+                ci_std = (std - 1.96 * se_std, std, std + 1.96 * se_std)
+
+            # --- CI for Sharpe Ratio ---
             sharpe = met["Sharpe"]
             ci_sharpe = (sharpe, sharpe, sharpe)
             if n > 0:
                 se_sharpe = np.sqrt((1 + 0.5 * sharpe ** 2) / n)
                 ci_sharpe = (sharpe - 1.96 * se_sharpe, sharpe, sharpe + 1.96 * se_sharpe)
-        
-            std = met["Annual_Std"]*100
-            ci_std = (std, std, std)
-            if n > 1:
-                se_std = std / np.sqrt(2 * (n - 1))
-                ci_std = (std - 1.96 * se_std, std, std + 1.96 * se_std)
-        
-            # Layout: metric on left, compact scale on right
-            c1, c2 = st.columns([1,2])
+
+            # --- Layout: metric on left, compact scale on right, same line ---
+            c1, c2 = st.columns([2,3])
             with c1:
-                st.markdown(f"**Expected Annual Return:** {ci_std[1]:.2f}%")
+                st.markdown(f"**Expected Annual Return:** {exp_ret:.2f}%")
             with c2:
-                st.plotly_chart(compact_metric_scale("Expected Return", alpha_low, met['Exp_Annual_Rtn']*100, alpha_high), use_container_width=False)
-        
-            c1, c2 = st.columns([1,2])
+                st.plotly_chart(compact_metric_scale("Expected Return", exp_ret_low, exp_ret, exp_ret_high), use_container_width=False)
+
+            c1, c2 = st.columns([2,3])
             with c1:
                 st.markdown(f"**Annual Std Dev:** {ci_std[1]:.2f}%")
             with c2:
                 st.plotly_chart(compact_metric_scale("Std Dev", ci_std[0], ci_std[1], ci_std[2]), use_container_width=False)
-        
-            c1, c2 = st.columns([1,2])
+
+            c1, c2 = st.columns([2,3])
             with c1:
                 st.markdown(f"**Sharpe Ratio:** {ci_sharpe[1]:.2f}")
             with c2:
@@ -345,6 +369,7 @@ with tabs[0]:
     else:
         st.error("Unable to fetch price/factor data.")
     st.session_state["selected_stock"] = ticker
+
 
 # ---- Portfolio Analyzer Tab ----
 with tabs[1]:
