@@ -115,8 +115,6 @@ def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
     wr = weekly_returns(tkr, sd, ed)
     if wr is not None and not wr.empty:
         actual_years = (wr.index[-1] - wr.index[0]).days / 365.25
-        if actual_years < DEFAULT_YEARS:
-            st.warning(f"{tkr} has only {actual_years:.1f} years of data. Metrics may be less reliable.")
     if wr is None or wr.empty or ff is None or ff.empty:
         return None
     rf = get_risk_free_rate_series(sd, ed, default_rate=st.session_state["current_rf"])
