@@ -148,36 +148,37 @@ def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
         "Adj_R2": round(m.rsquared_adj, 4),
     }
 
-def metric_scale_fig(metric_name, lower, upper, value, unit="%"):
-    # Create a horizontal line for CI
+def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=300):
     fig = go.Figure()
+    # Draw line
+    fig.add_shape(type="line",
+                  x0=0, x1=1, y0=0, y1=0,
+                  line=dict(color="lightgray", width=8))
+    # Points: lower, expected, upper
+    xs = [0, 0.5, 1]
+    vals = [lower, value, upper]
+    colors = ["#1f77b4", "red", "#1f77b4"]
+    texts = [f"{lower:.2f}{unit}", f"{value:.2f}{unit}", f"{upper:.2f}{unit}"]
+
     fig.add_trace(go.Scatter(
-        x=[lower, upper],
-        y=[0, 0],
-        mode='lines',
-        line=dict(color='lightgray', width=10),
-        showlegend=False,
-        hoverinfo='skip'
-    ))
-    # Add a pointer/marker for the expected value
-    fig.add_trace(go.Scatter(
-        x=[value],
-        y=[0],
-        mode='markers+text',
-        marker=dict(color='red', size=16, symbol='triangle-up'),
-        text=[f"{value:.2f}{unit}"],
-        textposition="top center",
+        x=xs, y=[0]*3,
+        mode="markers+text",
+        marker=dict(color=colors, size=[10,16,10], symbol=["circle","diamond","circle"]),
+        text=texts,
+        textposition=["bottom left", "top center", "bottom right"],
         showlegend=False
     ))
     fig.update_layout(
-        title=f"{metric_name} (95% CI)",
-        xaxis=dict(range=[lower, upper], showgrid=False, zeroline=False, title=f"{metric_name}"),
+        margin=dict(l=0, r=0, t=10, b=0),
+        height=70,
+        width=width,
+        xaxis=dict(visible=False),
         yaxis=dict(visible=False),
-        height=120,
-        margin=dict(l=20, r=20, t=40, b=10)
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)"
     )
     return fig
-
+    
 # ---- Return Contribution by Stock Chart ----
 def plot_return_contributions_by_stock(df, rf_pct, display_map, key):
     tot = df["MarketValue"].sum()
@@ -287,35 +288,45 @@ with tabs[0]:
                         use_container_width=True, key="sa_price")
         met = compute_factor_metrics_for_stock(ticker, sd, ed, ff)
         if met:
-            st.markdown(f"**Expected Annual Return:** {met['Exp_Annual_Rtn']*100:.2f}%")
-            st.markdown(f"**Annual Std Dev:** {met['Annual_Std']*100:.2f}%")
-            st.markdown(f"**Sharpe Ratio:** {met['Sharpe']:.2f}")
-
-             # --- Add CIs ---
             model = met['Model']
             n = len(model.model.endog) if hasattr(model, 'model') else 0
         
-            # CI for Expected Return (alpha)
             conf_int = model.conf_int(alpha=0.05)
+            alpha_low = alpha_high = met['Exp_Annual_Rtn']*100
             if "const" in conf_int.index:
                 alpha_low = conf_int.loc["const", 0] * 52 * 100
                 alpha_high = conf_int.loc["const", 1] * 52 * 100
         
-            # CI for Sharpe Ratio (approximate)
             sharpe = met["Sharpe"]
+            ci_sharpe = (sharpe, sharpe, sharpe)
             if n > 0:
                 se_sharpe = np.sqrt((1 + 0.5 * sharpe ** 2) / n)
-                ci_sharpe = (sharpe - 1.96 * se_sharpe, sharpe + 1.96 * se_sharpe)
-                
-            # CI for Standard Deviation (approximate, using normal distribution)
-            std = met["Annual_Std"]
+                ci_sharpe = (sharpe - 1.96 * se_sharpe, sharpe, sharpe + 1.96 * se_sharpe)
+        
+            std = met["Annual_Std"]*100
+            ci_std = (std, std, std)
             if n > 1:
                 se_std = std / np.sqrt(2 * (n - 1))
-                ci_std = (std - 1.96 * se_std, std + 1.96 * se_std)
-
-            st.plotly_chart(metric_scale_fig("Expected Return", alpha_low, alpha_high, met["Exp_Annual_Rtn"]*100), use_container_width=True)
-            st.plotly_chart(metric_scale_fig("Std Dev", ci_std[0]*100, ci_std[1]*100, met["Annual_Std"]*100), use_container_width=True)
-            st.plotly_chart(metric_scale_fig("Sharpe Ratio", ci_sharpe[0], ci_sharpe[1], met["Sharpe"], unit=""), use_container_width=True)
+                ci_std = (std - 1.96 * se_std, std, std + 1.96 * se_std)
+        
+            # Layout: metric on left, compact scale on right
+            c1, c2 = st.columns([1,2])
+            with c1:
+                st.markdown(f"**Expected Annual Return:** {ci_std[1]:.2f}%")
+            with c2:
+                st.plotly_chart(compact_metric_scale("Expected Return", alpha_low, met['Exp_Annual_Rtn']*100, alpha_high), use_container_width=False)
+        
+            c1, c2 = st.columns([1,2])
+            with c1:
+                st.markdown(f"**Annual Std Dev:** {ci_std[1]:.2f}%")
+            with c2:
+                st.plotly_chart(compact_metric_scale("Std Dev", ci_std[0], ci_std[1], ci_std[2]), use_container_width=False)
+        
+            c1, c2 = st.columns([1,2])
+            with c1:
+                st.markdown(f"**Sharpe Ratio:** {ci_sharpe[1]:.2f}")
+            with c2:
+                st.plotly_chart(compact_metric_scale("Sharpe Ratio", ci_sharpe[0], ci_sharpe[1], ci_sharpe[2], unit=""), use_container_width=False)
 
             st.subheader("Model Statistics")
             st.markdown(f"• R²: {met['R2']}   • Adj R²: {met['Adj_R2']}")
