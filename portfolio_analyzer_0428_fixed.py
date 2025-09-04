@@ -148,34 +148,35 @@ def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
         "Adj_R2": round(m.rsquared_adj, 4),
     }
 
-def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=260, bar_color="lightgray", marker_color="#1f77b4", expected_color="red"):
+def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=260):
     import plotly.graph_objects as go
-    fig = go.Figure()
-    # Horizontal bar
-    fig.add_shape(type="line",
-                  x0=0, x1=1, y0=0, y1=0,
-                  line=dict(color=bar_color, width=8))
-
-    # End markers and expected value
-    xs = [0, 0.5, 1]
-    colors = [marker_color, expected_color, marker_color]
+    left_margin = 38
+    right_margin = 38
+    # Move endpoints slightly inward so labels fit
+    xs = [0.08, 0.5, 0.92]
     vals = [lower, value, upper]
+    colors = ["#1f77b4", "red", "#1f77b4"]
     texts = [f"{lower:.2f}{unit}", f"{value:.2f}{unit}", f"{upper:.2f}{unit}"]
+
+    fig = go.Figure()
+    fig.add_shape(type="line",
+                  x0=xs[0], x1=xs[2], y0=0, y1=0,
+                  line=dict(color="lightgray", width=8))
     fig.add_trace(go.Scatter(
         x=xs, y=[0, 0, 0],
         mode="markers+text",
-        marker=dict(color=colors, size=[14,18,14], symbol=["circle","diamond","circle"]),
+        marker=dict(color=colors, size=[13,18,13], symbol=["circle","diamond","circle"]),
         text=texts,
-        textposition=["middle left", "bottom center", "middle right"],   # "inside" the bar ends!
-        textfont=dict(size=14, color="white"),
+        textposition=["middle left", "bottom center", "middle right"],
+        textfont=[dict(size=11, color="white"), dict(size=14, color="white"), dict(size=11, color="white")],
         showlegend=False
     ))
     fig.update_layout(
-        margin=dict(l=0, r=0, t=0, b=0),
-        height=44,
+        margin=dict(l=left_margin, r=right_margin, t=0, b=0),
+        height=54,
         width=width,
-        xaxis=dict(visible=False, fixedrange=True),
-        yaxis=dict(visible=False, fixedrange=True),
+        xaxis=dict(visible=False, fixedrange=True, range=[0, 1]),
+        yaxis=dict(visible=False, fixedrange=True, range=[-1, 1]),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)"
     )
@@ -271,8 +272,7 @@ def compute_portfolio_regression_metrics(df, sd, ed, ff):
 # ---- Main App Tabs ----
 tabs = st.tabs(["Stock Analyzer", "Portfolio Analyzer"])
 
-# --- Stock Analyzer Tab ---
-
+# ---- Stock Analyzer Tab ----
 with tabs[0]:
     st.header("Individual Stock Analysis")
     ticker = st.text_input("Ticker", "RELIANCE.NS", key="sa_tkr").strip().upper()
@@ -299,10 +299,8 @@ with tabs[0]:
 
             # --- Compute Confidence Interval for Expected Annual Return ---
             conf_int = model.conf_int(alpha=0.05)
-            # Get CIs for intercept and all betas
             alpha_low = conf_int.loc["const", 0] if "const" in conf_int.index else betas.get("const", 0)
             alpha_high = conf_int.loc["const", 1] if "const" in conf_int.index else betas.get("const", 0)
-            # For each factor, get CI for its beta
             exp_ret_low = alpha_low
             exp_ret_high = alpha_high
             for fac in factor_means.index:
@@ -312,7 +310,6 @@ with tabs[0]:
                 else:
                     exp_ret_low += betas.get(fac, 0) * factor_means[fac]
                     exp_ret_high += betas.get(fac, 0) * factor_means[fac]
-            # Convert weekly excess return to annual, then add RF
             exp_ret_low = (1 + exp_ret_low) ** 52 - 1
             exp_ret_high = (1 + exp_ret_high) ** 52 - 1
             exp_ret_low = (rf_val + exp_ret_low) * 100
@@ -333,24 +330,80 @@ with tabs[0]:
                 se_sharpe = np.sqrt((1 + 0.5 * sharpe ** 2) / n)
                 ci_sharpe = (sharpe - 1.96 * se_sharpe, sharpe, sharpe + 1.96 * se_sharpe)
 
-            # --- Layout: metric on left, compact scale on right, same line ---
-            c1, c2 = st.columns([2,3])
-            with c1:
-                st.markdown(f"**Expected Annual Return:** {exp_ret:.2f}%")
-            with c2:
-                st.plotly_chart(compact_metric_scale("Expected Return", exp_ret_low, exp_ret, exp_ret_high), use_container_width=False)
+            # ---- Display metrics and scales, with better alignment and visibility ----
+            def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=260):
+                import plotly.graph_objects as go
+                left_margin = 38
+                right_margin = 38
+                # Move endpoints slightly inward so labels fit
+                xs = [0.08, 0.5, 0.92]
+                vals = [lower, value, upper]
+                colors = ["#1f77b4", "red", "#1f77b4"]
+                texts = [f"{lower:.2f}{unit}", f"{value:.2f}{unit}", f"{upper:.2f}{unit}"]
 
-            c1, c2 = st.columns([2,3])
-            with c1:
-                st.markdown(f"**Annual Std Dev:** {ci_std[1]:.2f}%")
-            with c2:
-                st.plotly_chart(compact_metric_scale("Std Dev", ci_std[0], ci_std[1], ci_std[2]), use_container_width=False)
+                # Use smaller font for endpoint callouts, larger for expected value
+                font_sizes = [11, 14, 11]
+                fig = go.Figure()
+                fig.add_shape(type="line",
+                              x0=xs[0], x1=xs[2], y0=0, y1=0,
+                              line=dict(color="lightgray", width=8))
+                fig.add_trace(go.Scatter(
+                    x=xs, y=[0, 0, 0],
+                    mode="markers+text",
+                    marker=dict(color=colors, size=[13,18,13], symbol=["circle","diamond","circle"]),
+                    text=texts,
+                    textposition=["middle left", "bottom center", "middle right"],
+                    textfont=dict(size=14, color="white"),
+                    showlegend=False
+                ))
+                # Fix: Use individual font sizes for each text
+                for i in [0,2]:
+                    fig.add_annotation(
+                        x=xs[i], y=0, text=texts[i],
+                        showarrow=False,
+                        yshift=0,
+                        font=dict(size=font_sizes[i], color="white"),
+                        xanchor="center",
+                        yanchor="middle"
+                    )
+                # Expected value annotation
+                fig.add_annotation(
+                    x=xs[1], y=0, text=texts[1],
+                    showarrow=False,
+                    yshift=18,
+                    font=dict(size=font_sizes[1], color="white"),
+                    xanchor="center",
+                    yanchor="top"
+                )
+                fig.update_layout(
+                    margin=dict(l=left_margin, r=right_margin, t=0, b=0),
+                    height=54,
+                    width=width,
+                    xaxis=dict(visible=False, fixedrange=True, range=[0, 1]),
+                    yaxis=dict(visible=False, fixedrange=True, range=[-1, 1]),
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)"
+                )
+                return fig
 
-            c1, c2 = st.columns([2,3])
-            with c1:
-                st.markdown(f"**Sharpe Ratio:** {ci_sharpe[1]:.2f}")
-            with c2:
-                st.plotly_chart(compact_metric_scale("Sharpe Ratio", ci_sharpe[0], ci_sharpe[1], ci_sharpe[2], unit=""), use_container_width=False)
+            # Display in a single row for each metric, tightly aligned
+            for label, value, ci, unit in [
+                ("Expected Annual Return", exp_ret, (exp_ret_low, exp_ret, exp_ret_high), "%"),
+                ("Annual Std Dev", ci_std[1], ci_std, "%"),
+                ("Sharpe Ratio", ci_sharpe[1], ci_sharpe, ""),
+            ]:
+                col_text, col_bar = st.columns([2,3])
+                # Add vertical padding to align the bar with the text
+                with col_text:
+                    st.markdown(
+                        f"<div style='padding-top:18px'><b>{label}:</b> {value:.2f}{unit}</div>",
+                        unsafe_allow_html=True
+                    )
+                with col_bar:
+                    st.plotly_chart(
+                        compact_metric_scale(label, ci[0], ci[1], ci[2], unit),
+                        use_container_width=False
+                    )
 
             st.subheader("Model Statistics")
             st.markdown(f"• R²: {met['R2']}   • Adj R²: {met['Adj_R2']}")
@@ -362,14 +415,14 @@ with tabs[0]:
             contrib["Alpha"] = met["Betas"].get("const", 0) * 52
             dfc = pd.DataFrame({"Factor": list(contrib.keys()), "Contribution (%)": [v*100 for v in contrib.values()]}).round(2)
             st.plotly_chart(px.bar(dfc, x="Factor", y="Contribution (%)",
-                                  text=dfc["Contribution (%)"].astype(str) + "%"),
+                                  text=dfc["Contribution (%)"].astype(str) + "%",
+                                  title="Annual Excess Return Contributions"),
                             use_container_width=True, key="sa_contrib")
         else:
             st.error("Insufficient data for regression.")
     else:
         st.error("Unable to fetch price/factor data.")
     st.session_state["selected_stock"] = ticker
-
 
 # ---- Portfolio Analyzer Tab ----
 with tabs[1]:
