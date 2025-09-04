@@ -113,6 +113,10 @@ def get_sector_info(ticker):
 # ---- Stock‐Level Regression & Metrics ----
 def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
     wr = weekly_returns(tkr, sd, ed)
+    if wr is not None and not wr.empty:
+        actual_years = (wr.index[-1] - wr.index[0]).days / 365.25
+        if actual_years < DEFAULT_YEARS:
+            st.warning(f"{tkr} has only {actual_years:.1f} years of data. Metrics may be less reliable.")
     if wr is None or wr.empty or ff is None or ff.empty:
         return None
     rf = get_risk_free_rate_series(sd, ed, default_rate=st.session_state["current_rf"])
@@ -240,8 +244,11 @@ tabs = st.tabs(["Stock Analyzer", "Portfolio Analyzer"])
 with tabs[0]:
     st.header("Individual Stock Analysis")
     ticker = st.text_input("Ticker", "RELIANCE.NS", key="sa_tkr").strip().upper()
-    ed = st.date_input("End Date", datetime.now(), key="sa_ed")
-    sd = st.date_input("Start Date", ed - timedelta(days=365*15), key="sa_sd")
+    DEFAULT_YEARS = 5
+    today = datetime.now()
+    default_start_date = today - timedelta(days=365*DEFAULT_YEARS)
+    ed = st.date_input("End Date", today, key="sa_ed")
+    sd = st.date_input("Start Date", default_start_date, key="sa_sd")
     rf_rate = st.number_input("Risk-Free Rate (%)", 6.5, step=0.1, key="sa_rf")
     st.session_state["current_rf"] = rf_rate
 
@@ -255,6 +262,32 @@ with tabs[0]:
             st.markdown(f"**Expected Annual Return:** {met['Exp_Annual_Rtn']*100:.2f}%")
             st.markdown(f"**Annual Std Dev:** {met['Annual_Std']*100:.2f}%")
             st.markdown(f"**Sharpe Ratio:** {met['Sharpe']:.2f}")
+
+             # --- Add CIs ---
+            model = met['Model']
+            n = len(model.model.endog) if hasattr(model, 'model') else 0
+        
+            # CI for Expected Return (alpha)
+            conf_int = model.conf_int(alpha=0.05)
+            if "const" in conf_int.index:
+                alpha_low = conf_int.loc["const", 0] * 52 * 100
+                alpha_high = conf_int.loc["const", 1] * 52 * 100
+                st.markdown(f"**Alpha (Annualized) 95% CI:** [{alpha_low:.2f}%, {alpha_high:.2f}%]")
+        
+            # CI for Sharpe Ratio (approximate)
+            sharpe = met["Sharpe"]
+            if n > 0:
+                se_sharpe = np.sqrt((1 + 0.5 * sharpe ** 2) / n)
+                ci_sharpe = (sharpe - 1.96 * se_sharpe, sharpe + 1.96 * se_sharpe)
+                st.markdown(f"**Sharpe Ratio 95% CI:** [{ci_sharpe[0]:.2f}, {ci_sharpe[1]:.2f}]")
+        
+            # CI for Standard Deviation (approximate, using normal distribution)
+            std = met["Annual_Std"]
+            if n > 1:
+                se_std = std / np.sqrt(2 * (n - 1))
+                ci_std = (std - 1.96 * se_std, std + 1.96 * se_std)
+                st.markdown(f"**Annual Std Dev 95% CI:** [{ci_std[0]*100:.2f}%, {ci_std[1]*100:.2f}%]")
+
             st.subheader("Model Statistics")
             st.markdown(f"• R²: {met['R2']}   • Adj R²: {met['Adj_R2']}")
             st.subheader("Factor Betas")
@@ -393,7 +426,8 @@ with tabs[1]:
         active = pd.DataFrame([{"Ticker":t,"Current Qty":qty_map[t]} for t in qty_map if qty_map[t]>0])
 
         today = pd.to_datetime("today")
-        sd2 = st.date_input("Start Date", today - timedelta(days=365*15), key="pa_sd2")
+        default_start_date = today - timedelta(days=365*DEFAULT_YEARS)
+        sd2 = st.date_input("Start Date", default_start_date, key="pa_sd2")
         ed2 = st.date_input("End Date", today, key="pa_ed2")
         rf2 = st.number_input("Risk-Free Rate (%)", 6.5, step=0.1, key="pa_rf2")
         st.session_state["current_rf"] = rf2
