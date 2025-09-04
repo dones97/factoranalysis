@@ -148,6 +148,36 @@ def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
         "Adj_R2": round(m.rsquared_adj, 4),
     }
 
+def metric_scale_fig(metric_name, lower, upper, value, unit="%"):
+    # Create a horizontal line for CI
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=[lower, upper],
+        y=[0, 0],
+        mode='lines',
+        line=dict(color='lightgray', width=10),
+        showlegend=False,
+        hoverinfo='skip'
+    ))
+    # Add a pointer/marker for the expected value
+    fig.add_trace(go.Scatter(
+        x=[value],
+        y=[0],
+        mode='markers+text',
+        marker=dict(color='red', size=16, symbol='triangle-up'),
+        text=[f"{value:.2f}{unit}"],
+        textposition="top center",
+        showlegend=False
+    ))
+    fig.update_layout(
+        title=f"{metric_name} (95% CI)",
+        xaxis=dict(range=[lower, upper], showgrid=False, zeroline=False, title=f"{metric_name}"),
+        yaxis=dict(visible=False),
+        height=120,
+        margin=dict(l=20, r=20, t=40, b=10)
+    )
+    return fig
+
 # ---- Return Contribution by Stock Chart ----
 def plot_return_contributions_by_stock(df, rf_pct, display_map, key):
     tot = df["MarketValue"].sum()
@@ -270,21 +300,22 @@ with tabs[0]:
             if "const" in conf_int.index:
                 alpha_low = conf_int.loc["const", 0] * 52 * 100
                 alpha_high = conf_int.loc["const", 1] * 52 * 100
-                st.markdown(f"**Alpha (Annualized) 95% CI:** [{alpha_low:.2f}%, {alpha_high:.2f}%]")
         
             # CI for Sharpe Ratio (approximate)
             sharpe = met["Sharpe"]
             if n > 0:
                 se_sharpe = np.sqrt((1 + 0.5 * sharpe ** 2) / n)
                 ci_sharpe = (sharpe - 1.96 * se_sharpe, sharpe + 1.96 * se_sharpe)
-                st.markdown(f"**Sharpe Ratio 95% CI:** [{ci_sharpe[0]:.2f}, {ci_sharpe[1]:.2f}]")
-        
+                
             # CI for Standard Deviation (approximate, using normal distribution)
             std = met["Annual_Std"]
             if n > 1:
                 se_std = std / np.sqrt(2 * (n - 1))
                 ci_std = (std - 1.96 * se_std, std + 1.96 * se_std)
-                st.markdown(f"**Annual Std Dev 95% CI:** [{ci_std[0]*100:.2f}%, {ci_std[1]*100:.2f}%]")
+
+            st.plotly_chart(metric_scale_fig("Expected Return", alpha_low, alpha_high, met["Exp_Annual_Rtn"]*100), use_container_width=True)
+            st.plotly_chart(metric_scale_fig("Std Dev", ci_std[0]*100, ci_std[1]*100, met["Annual_Std"]*100), use_container_width=True)
+            st.plotly_chart(metric_scale_fig("Sharpe Ratio", ci_sharpe[0], ci_sharpe[1], met["Sharpe"], unit=""), use_container_width=True)
 
             st.subheader("Model Statistics")
             st.markdown(f"• R²: {met['R2']}   • Adj R²: {met['Adj_R2']}")
