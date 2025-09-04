@@ -148,34 +148,34 @@ def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
         "Adj_R2": round(m.rsquared_adj, 4),
     }
 
-def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=300):
+def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=260, bar_color="lightgray", marker_color="#1f77b4", expected_color="red"):
+    import plotly.graph_objects as go
     fig = go.Figure()
-
-    # Main horizontal bar
+    # Horizontal bar
     fig.add_shape(type="line",
                   x0=0, x1=1, y0=0, y1=0,
-                  line=dict(color="lightgray", width=8))
+                  line=dict(color=bar_color, width=8))
 
     # End markers and expected value
     xs = [0, 0.5, 1]
+    colors = [marker_color, expected_color, marker_color]
     vals = [lower, value, upper]
-    colors = ["#1f77b4", "red", "#1f77b4"]
-    # Only expected value is shown on the scale, ends on top
+    texts = [f"{lower:.2f}{unit}", f"{value:.2f}{unit}", f"{upper:.2f}{unit}"]
     fig.add_trace(go.Scatter(
         x=xs, y=[0, 0, 0],
         mode="markers+text",
-        marker=dict(color=colors, size=[12,16,12], symbol=["circle","diamond","circle"]),
-        text=[f"{lower:.2f}{unit}", f"{value:.2f}{unit}", f"{upper:.2f}{unit}"],
-        textposition=["top left", "bottom center", "top right"],
+        marker=dict(color=colors, size=[14,18,14], symbol=["circle","diamond","circle"]),
+        text=texts,
+        textposition=["middle left", "bottom center", "middle right"],   # "inside" the bar ends!
+        textfont=dict(size=14, color="white"),
         showlegend=False
     ))
-
     fig.update_layout(
-        margin=dict(l=0, r=0, t=10, b=0),
-        height=60,
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=44,
         width=width,
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
+        xaxis=dict(visible=False, fixedrange=True),
+        yaxis=dict(visible=False, fixedrange=True),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)"
     )
