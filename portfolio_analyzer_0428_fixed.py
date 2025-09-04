@@ -242,7 +242,7 @@ tabs = st.tabs(["Stock Analyzer", "Portfolio Analyzer"])
 with tabs[0]:
     st.header("Individual Stock Analysis")
     ticker = st.text_input("Ticker", "RELIANCE.NS", key="sa_tkr").strip().upper()
-    DEFAULT_YEARS = 5
+    DEFAULT_YEARS = 10
     today = datetime.now()
     default_start_date = today - timedelta(days=365*DEFAULT_YEARS)
     ed = st.date_input("End Date", today, key="sa_ed")
