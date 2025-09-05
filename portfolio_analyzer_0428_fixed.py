@@ -148,32 +148,51 @@ def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
         "Adj_R2": round(m.rsquared_adj, 4),
     }
 
-def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=260):
+# ---- Improved compact_metric_scale ----
+def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=190):
     import plotly.graph_objects as go
-    left_margin = 38
-    right_margin = 38
-    # Move endpoints slightly inward so labels fit
-    xs = [0.08, 0.5, 0.92]
-    vals = [lower, value, upper]
+    left_margin = 22
+    right_margin = 22
+    xs = [0.11, 0.5, 0.89]
     colors = ["#1f77b4", "red", "#1f77b4"]
-    texts = [f"{lower:.2f}{unit}", f"{value:.2f}{unit}", f"{upper:.2f}{unit}"]
-
     fig = go.Figure()
     fig.add_shape(type="line",
                   x0=xs[0], x1=xs[2], y0=0, y1=0,
                   line=dict(color="lightgray", width=8))
     fig.add_trace(go.Scatter(
         x=xs, y=[0, 0, 0],
-        mode="markers+text",
+        mode="markers",
         marker=dict(color=colors, size=[13,18,13], symbol=["circle","diamond","circle"]),
-        text=texts,
-        textposition=["middle left", "bottom center", "middle right"],
-        textfont=[dict(size=11, color="white"), dict(size=14, color="white"), dict(size=11, color="white")],
         showlegend=False
     ))
+    # Show all value callouts just above the bar (closer: yshift=10, increased height)
+    fig.add_annotation(
+        x=xs[0], y=0, text=f"{lower:.2f}{unit}",
+        showarrow=False,
+        yshift=10,
+        font=dict(size=12, color="white"),
+        xanchor="left",
+        yanchor="bottom"
+    )
+    fig.add_annotation(
+        x=xs[1], y=0, text=f"{value:.2f}{unit}",
+        showarrow=False,
+        yshift=10,
+        font=dict(size=13, color="white"),
+        xanchor="center",
+        yanchor="bottom"
+    )
+    fig.add_annotation(
+        x=xs[2], y=0, text=f"{upper:.2f}{unit}",
+        showarrow=False,
+        yshift=10,
+        font=dict(size=12, color="white"),
+        xanchor="right",
+        yanchor="bottom"
+    )
     fig.update_layout(
         margin=dict(l=left_margin, r=right_margin, t=0, b=0),
-        height=54,
+        height=70,
         width=width,
         xaxis=dict(visible=False, fixedrange=True, range=[0, 1]),
         yaxis=dict(visible=False, fixedrange=True, range=[-1, 1]),
@@ -330,68 +349,13 @@ with tabs[0]:
                 se_sharpe = np.sqrt((1 + 0.5 * sharpe ** 2) / n)
                 ci_sharpe = (sharpe - 1.96 * se_sharpe, sharpe, sharpe + 1.96 * se_sharpe)
 
-            # ---- Fixed compact_metric_scale ----
-            def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=275):
-                import plotly.graph_objects as go
-                left_margin = 32
-                right_margin = 32
-                # Move endpoints slightly inward so labels fit
-                xs = [0.09, 0.5, 0.91]
-                colors = ["#1f77b4", "red", "#1f77b4"]
-                # Only markers on the bar
-                fig = go.Figure()
-                fig.add_shape(type="line",
-                              x0=xs[0], x1=xs[2], y0=0, y1=0,
-                              line=dict(color="lightgray", width=8))
-                fig.add_trace(go.Scatter(
-                    x=xs, y=[0, 0, 0],
-                    mode="markers",
-                    marker=dict(color=colors, size=[13,18,13], symbol=["circle","diamond","circle"]),
-                    showlegend=False
-                ))
-                # Show all value callouts just above the bar
-                fig.add_annotation(
-                    x=xs[0], y=0, text=f"{lower:.2f}{unit}",
-                    showarrow=False,
-                    yshift=20,
-                    font=dict(size=13, color="white"),
-                    xanchor="left",
-                    yanchor="bottom"
-                )
-                fig.add_annotation(
-                    x=xs[1], y=0, text=f"{value:.2f}{unit}",
-                    showarrow=False,
-                    yshift=20,
-                    font=dict(size=15, color="white"),
-                    xanchor="center",
-                    yanchor="bottom"
-                )
-                fig.add_annotation(
-                    x=xs[2], y=0, text=f"{upper:.2f}{unit}",
-                    showarrow=False,
-                    yshift=20,
-                    font=dict(size=13, color="white"),
-                    xanchor="right",
-                    yanchor="bottom"
-                )
-                fig.update_layout(
-                    margin=dict(l=left_margin, r=right_margin, t=0, b=0),
-                    height=56,
-                    width=width,
-                    xaxis=dict(visible=False, fixedrange=True, range=[0, 1]),
-                    yaxis=dict(visible=False, fixedrange=True, range=[-1, 1]),
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    paper_bgcolor="rgba(0,0,0,0)"
-                )
-                return fig
-
-            # Display metrics and scales, with tight alignment (no text below bar!)
+            # Display metrics and scales, with tight alignment and smaller bar
             for label, value, ci, unit in [
                 ("Expected Annual Return", exp_ret, (exp_ret_low, exp_ret, exp_ret_high), "%"),
                 ("Annual Std Dev", ci_std[1], ci_std, "%"),
                 ("Sharpe Ratio", ci_sharpe[1], ci_sharpe, ""),
             ]:
-                col_text, col_bar = st.columns([2,3])
+                col_text, col_bar = st.columns([2,2])
                 with col_text:
                     st.markdown(
                         f"<div style='padding-top:18px'><b>{label}:</b> {value:.2f}{unit}</div>",
