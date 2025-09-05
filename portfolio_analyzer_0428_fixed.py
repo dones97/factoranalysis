@@ -148,12 +148,12 @@ def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
         "Adj_R2": round(m.rsquared_adj, 4),
     }
 
-# ---- Improved compact_metric_scale ----
-def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=190):
+# ---- Extended bar compact_metric_scale ----
+def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=370):
     import plotly.graph_objects as go
-    left_margin = 22
-    right_margin = 22
-    xs = [0.11, 0.5, 0.89]
+    left_margin = 16
+    right_margin = 16
+    xs = [0.09, 0.5, 0.91]
     colors = ["#1f77b4", "red", "#1f77b4"]
     fig = go.Figure()
     fig.add_shape(type="line",
@@ -165,34 +165,34 @@ def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=190):
         marker=dict(color=colors, size=[13,18,13], symbol=["circle","diamond","circle"]),
         showlegend=False
     ))
-    # Show all value callouts just above the bar (closer: yshift=10, increased height)
+    # Value callouts above the bar, closer with yshift
     fig.add_annotation(
         x=xs[0], y=0, text=f"{lower:.2f}{unit}",
         showarrow=False,
-        yshift=10,
-        font=dict(size=12, color="white"),
+        yshift=9,
+        font=dict(size=13, color="white"),
         xanchor="left",
         yanchor="bottom"
     )
     fig.add_annotation(
         x=xs[1], y=0, text=f"{value:.2f}{unit}",
         showarrow=False,
-        yshift=10,
-        font=dict(size=13, color="white"),
+        yshift=9,
+        font=dict(size=15, color="white"),
         xanchor="center",
         yanchor="bottom"
     )
     fig.add_annotation(
         x=xs[2], y=0, text=f"{upper:.2f}{unit}",
         showarrow=False,
-        yshift=10,
-        font=dict(size=12, color="white"),
+        yshift=9,
+        font=dict(size=13, color="white"),
         xanchor="right",
         yanchor="bottom"
     )
     fig.update_layout(
         margin=dict(l=left_margin, r=right_margin, t=0, b=0),
-        height=70,
+        height=54,
         width=width,
         xaxis=dict(visible=False, fixedrange=True, range=[0, 1]),
         yaxis=dict(visible=False, fixedrange=True, range=[-1, 1]),
@@ -349,7 +349,7 @@ with tabs[0]:
                 se_sharpe = np.sqrt((1 + 0.5 * sharpe ** 2) / n)
                 ci_sharpe = (sharpe - 1.96 * se_sharpe, sharpe, sharpe + 1.96 * se_sharpe)
 
-            # Display metrics and scales, with tight alignment and smaller bar
+            # Display metrics and scales, with columns closer together
             for label, value, ci, unit in [
                 ("Expected Annual Return", exp_ret, (exp_ret_low, exp_ret, exp_ret_high), "%"),
                 ("Annual Std Dev", ci_std[1], ci_std, "%"),
