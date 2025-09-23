@@ -667,6 +667,7 @@ with tabs[1]:
                 st.plotly_chart(figc, use_container_width=True, key="corr")
             else:
                 st.info("Insufficient data for correlation.")
+                
             # ---- Sector & Industry Exposures ----
             st.subheader("Sector & Industry Exposures")
             
@@ -726,6 +727,85 @@ with tabs[1]:
             )
             fig_industry.update_traces(textposition="outside")
             st.plotly_chart(fig_industry, use_container_width=True, key="industry_exp")
+
+             # ---- Market Cap Exposures (Stacked Horizontal Bar) ----
+            st.subheader("Market Cap Exposure")
+            
+            def get_market_cap_info(ticker):
+                try:
+                    info = yf.Ticker(ticker).info
+                    return info.get("marketCap", None)
+                except Exception:
+                    return None
+            
+            def classify_market_cap(market_cap):
+                if market_cap is None or np.isnan(market_cap):
+                    return "Unknown"
+                if market_cap >= 500000000000:   # >= ₹50,000 crore
+                    return "Large Cap"
+                elif market_cap >= 170000000000: # >= ₹17,000 crore
+                    return "Mid Cap"
+                elif market_cap >= 10000000000:  # >= ₹1,000 crore
+                    return "Small Cap"
+                else:
+                    return "Micro Cap"
+            
+            def compute_market_cap_exposures(df_ind, market_value_col="MarketValue"):
+                market_caps = []
+                cap_classes = []
+                for t in df_ind["Ticker"]:
+                    mc = get_market_cap_info(t)
+                    market_caps.append(mc)
+                    cap_classes.append(classify_market_cap(mc))
+                df_ind["MarketCap"] = market_caps
+                df_ind["CapClass"] = cap_classes
+                total_mv = df_ind[market_value_col].sum()
+                cap_exp = df_ind.groupby("CapClass")[market_value_col].sum()
+                cap_exp = (cap_exp / total_mv * 100).round(2)
+                # Ensure all cap classes are always present, even if 0
+                all_caps = ["Large Cap", "Mid Cap", "Small Cap", "Micro Cap"]
+                cap_exp = cap_exp.reindex(all_caps, fill_value=0)
+                return cap_exp
+            
+            cap_exposure_df = act_ind if changed else base_ind
+            cap_exp = compute_market_cap_exposures(cap_exposure_df)
+            
+            # Define color gradient: Large → Micro
+            cap_colors = {
+                "Large Cap": "#3366cc",    # blue
+                "Mid Cap": "#43a047",      # green
+                "Small Cap": "#ffb300",    # orange
+                "Micro Cap": "#e53935",    # red
+            }
+            
+            import plotly.graph_objects as go
+            
+            # Build the stacked horizontal bar
+            fig_cap = go.Figure()
+            cumulative = 0
+            for cap in cap_exp.index:
+                value = cap_exp[cap]
+                fig_cap.add_trace(go.Bar(
+                    y=["Market Cap Exposure"],
+                    x=[value],
+                    name=cap,
+                    orientation='h',
+                    marker_color=cap_colors.get(cap, "#cccccc"),
+                    text=f"{value:.2f}%" if value > 0 else "",
+                    textposition='inside',
+                    insidetextanchor='middle'
+                ))
+            
+            fig_cap.update_layout(
+                barmode='stack',
+                xaxis=dict(range=[0, 100], title="Exposure (%)"),
+                yaxis=dict(showticklabels=False),
+                title="Market Cap Exposure (Portfolio %)",
+                showlegend=True,
+                height=120,
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_cap, use_container_width=True, key="cap_exp")
 
             # Portfolio Betas (Regression)
             st.subheader("Portfolio Betas (Regression)")
