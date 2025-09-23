@@ -728,7 +728,7 @@ with tabs[1]:
             fig_industry.update_traces(textposition="outside")
             st.plotly_chart(fig_industry, use_container_width=True, key="industry_exp")
 
-             # ---- Market Cap Exposures (Stacked Horizontal Bar) ----
+            # ---- Market Cap Exposures (Stacked Horizontal Bar: Micro -> Large) ----
             st.subheader("Market Cap Exposure")
             
             def get_market_cap_info(ticker):
@@ -762,48 +762,57 @@ with tabs[1]:
                 total_mv = df_ind[market_value_col].sum()
                 cap_exp = df_ind.groupby("CapClass")[market_value_col].sum()
                 cap_exp = (cap_exp / total_mv * 100).round(2)
-                # Ensure all cap classes are always present, even if 0
-                all_caps = ["Large Cap", "Mid Cap", "Small Cap", "Micro Cap"]
+                # Ensure all classes are present in micro→large order
+                all_caps = ["Micro Cap", "Small Cap", "Mid Cap", "Large Cap"]
                 cap_exp = cap_exp.reindex(all_caps, fill_value=0)
                 return cap_exp
             
             cap_exposure_df = act_ind if changed else base_ind
             cap_exp = compute_market_cap_exposures(cap_exposure_df)
             
-            # Define color gradient: Large → Micro
             cap_colors = {
-                "Large Cap": "#3366cc",    # blue
-                "Mid Cap": "#43a047",      # green
-                "Small Cap": "#ffb300",    # orange
                 "Micro Cap": "#e53935",    # red
+                "Small Cap": "#ffb300",    # orange
+                "Mid Cap": "#43a047",      # green
+                "Large Cap": "#3366cc",    # blue
             }
             
             import plotly.graph_objects as go
             
-            # Build the stacked horizontal bar
+            # Build stacked horizontal bar, micro → large
             fig_cap = go.Figure()
-            cumulative = 0
             for cap in cap_exp.index:
                 value = cap_exp[cap]
+                # Multi-line text: Percent above, cap class below
+                display_text = f"{value:.2f}%<br><span style='font-size:12px;'>{cap}</span>" if value > 0 else ""
+                # Use HTML for smaller label font
                 fig_cap.add_trace(go.Bar(
-                    y=["Market Cap Exposure"],
+                    y=[""],
                     x=[value],
                     name=cap,
                     orientation='h',
                     marker_color=cap_colors.get(cap, "#cccccc"),
-                    text=f"{value:.2f}%" if value > 0 else "",
+                    text=display_text,
                     textposition='inside',
-                    insidetextanchor='middle'
+                    insidetextanchor='middle',
+                    hovertemplate=f"{cap}: {value:.2f}%<extra></extra>",
+                    showlegend=False  # No separate legend
                 ))
             
             fig_cap.update_layout(
                 barmode='stack',
-                xaxis=dict(range=[0, 100], title="Exposure (%)"),
-                yaxis=dict(showticklabels=False),
+                xaxis=dict(
+                    showticklabels=False,
+                    showgrid=False,
+                    zeroline=False,
+                    visible=False,
+                    range=[0, 100]
+                ),
+                yaxis=dict(showticklabels=False, visible=False),
                 title="Market Cap Exposure (Portfolio %)",
-                showlegend=True,
-                height=120,
-                margin=dict(l=20, r=20, t=40, b=20)
+                height=110,
+                margin=dict(l=20, r=20, t=40, b=20),
+                plot_bgcolor="white"
             )
             st.plotly_chart(fig_cap, use_container_width=True, key="cap_exp")
 
