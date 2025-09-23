@@ -369,6 +369,34 @@ with tabs[0]:
 
             st.subheader("Model Statistics")
             st.markdown(f"• R²: {met['R2']}   • Adj R²: {met['Adj_R2']}")
+
+            # --- Show Sector, Industry, Market Cap ---
+            try:
+                info = yf.Ticker(ticker).info
+                sector = info.get("sector", "Unknown")
+                industry = info.get("industry", "Unknown")
+                market_cap = info.get("marketCap", None)
+                # Format market cap as e.g. ₹12,345 Cr or Unknown
+                if market_cap is not None and market_cap > 0:
+                    market_cap_display = f"₹{market_cap/1e7:,.0f} Cr"
+                else:
+                    market_cap_display = "Unknown"
+            except Exception:
+                sector = "Unknown"
+                industry = "Unknown"
+                market_cap_display = "Unknown"
+            
+            st.markdown(
+                f"""
+                <div style='margin-bottom: 18px;'>
+                    <b>Sector:</b> {sector} &nbsp; | &nbsp;
+                    <b>Industry:</b> {industry} &nbsp; | &nbsp;
+                    <b>Market Cap:</b> {market_cap_display}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
             st.subheader("Factor Betas")
             dfb = pd.DataFrame({"Beta": met["Betas"].round(4), "P-Value": met["Model"].pvalues.round(4)})
             st.dataframe(dfb, use_container_width=True, key="sa_betas")
