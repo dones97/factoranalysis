@@ -667,6 +667,65 @@ with tabs[1]:
                 st.plotly_chart(figc, use_container_width=True, key="corr")
             else:
                 st.info("Insufficient data for correlation.")
+            # ---- Sector & Industry Exposures ----
+            st.subheader("Sector & Industry Exposures")
+            
+            def get_industry_info(ticker):
+                info = yf.Ticker(ticker).info
+                return info.get("industry", "Unknown")
+            
+            def compute_exposures(df_ind, market_value_col="MarketValue"):
+                # Sector exposures
+                sectors = []
+                industries = []
+                for t in df_ind["Ticker"]:
+                    try:
+                        sector = get_sector_info(t)
+                    except Exception:
+                        sector = "Unknown"
+                    try:
+                        industry = get_industry_info(t)
+                    except Exception:
+                        industry = "Unknown"
+                    sectors.append(sector)
+                    industries.append(industry)
+                df_ind["Sector"] = sectors
+                df_ind["Industry"] = industries
+                total_mv = df_ind[market_value_col].sum()
+                # Sector
+                sector_exp = df_ind.groupby("Sector")[market_value_col].sum().sort_values(ascending=False)
+                sector_exp = (sector_exp / total_mv * 100).round(2)
+                # Industry
+                industry_exp = df_ind.groupby("Industry")[market_value_col].sum().sort_values(ascending=False)
+                industry_exp = (industry_exp / total_mv * 100).round(2)
+                return sector_exp, industry_exp
+            
+            # Use act_ind if changed, else base_ind
+            exposure_df = act_ind if changed else base_ind
+            
+            sector_exp, industry_exp = compute_exposures(exposure_df)
+            
+            # Plot Sector Exposures
+            fig_sector = px.bar(
+                x=sector_exp.index,
+                y=sector_exp.values,
+                labels={'x': 'Sector', 'y': 'Exposure (%)'},
+                text=[f"{v:.2f}%" for v in sector_exp.values],
+                title="Sector Exposure"
+            )
+            fig_sector.update_traces(textposition="outside")
+            st.plotly_chart(fig_sector, use_container_width=True, key="sector_exp")
+            
+            # Plot Industry Exposures
+            fig_industry = px.bar(
+                x=industry_exp.index,
+                y=industry_exp.values,
+                labels={'x': 'Industry', 'y': 'Exposure (%)'},
+                text=[f"{v:.2f}%" for v in industry_exp.values],
+                title="Industry Exposure"
+            )
+            fig_industry.update_traces(textposition="outside")
+            st.plotly_chart(fig_industry, use_container_width=True, key="industry_exp")
 
             # Portfolio Betas (Regression)
             st.subheader("Portfolio Betas (Regression)")
