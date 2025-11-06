@@ -11,6 +11,7 @@ import io
 import requests
 import zipfile
 import os
+import re
 
 st.set_page_config(layout="wide")
 st.title("Stock & Portfolio Analyzer with Editable Portfolios (French Factors)")
