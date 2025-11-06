@@ -8,10 +8,10 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from pandas_datareader.data import DataReader
 import io
-import requests
+import requests   # <-- Ensure this is with other imports, not duplicated later
 import zipfile
 import os
-import re
+import re   # <-- Ensure this is with other imports, not duplicated later
 
 st.set_page_config(layout="wide")
 st.title("Stock & Portfolio Analyzer with Editable Portfolios (French Factors)")
@@ -50,12 +50,6 @@ INDUSTRY_TO_SECTOR = {
 
 # ---- Helper: Download and Prepare Kenneth French Factors ----
 @st.cache_data(ttl=7*24*3600)
-import requests
-import zipfile
-import io
-import pandas as pd
-import re
-
 def download_and_format_kenneth_french_factors(start_date, end_date, freq="W-FRI"):
     ff_url = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_5_Factors_2x3_daily_CSV.zip"
     mom_url = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip"
