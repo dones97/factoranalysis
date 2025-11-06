@@ -62,7 +62,6 @@ def download_and_format_kenneth_french_factors(start_date, end_date, freq="W-FRI
         csv_name = [f for f in zf.namelist() if f.endswith('.csv')][0]
         raw = zf.read(csv_name).decode("latin1")
         lines = raw.split("\n")
-        # Only keep rows starting w/ valid 8-digit date as first column
         data_lines = []
         for line in lines:
             fields = re.split(r'[,\t;]', line.strip())
@@ -73,34 +72,27 @@ def download_and_format_kenneth_french_factors(start_date, end_date, freq="W-FRI
         if not data_lines:
             raise ValueError("No valid date rows found in factor file!")
         data_csv = "\n".join(data_lines)
-        try:
-            df = pd.read_csv(io.StringIO(data_csv))
-        except Exception:
-            df = pd.read_csv(io.StringIO(data_csv), header=None)
-        # For momentum, assign ["date", "WML"] if only one column after date
+        df = pd.read_csv(io.StringIO(data_csv))
+        # Defensive for momentum
         if col_name_hint == "Momentum" or col_name_hint == "WML":
+            # If only 2 columns, assign ["date", "WML"]
             if df.shape[1] == 2:
                 df.columns = ["date", "WML"]
-            elif df.shape[1] == 1:
-                raise ValueError("Momentum CSV does not have enough columns!")
-            else:
-                possible = [c for c in df.columns if str(c).strip().upper().startswith("MOM")]
-                if possible:
-                    df.rename(columns={possible[0]: "WML"}, inplace=True)
+            # Check for columns like "Mom   "
+            for c in df.columns:
+                if str(c).strip().upper().startswith("MOM"):
+                    df.rename(columns={c: "WML"}, inplace=True)
         return df
 
-    # Parse 5-factor CSV
     ff_daily = get_csv_from_zip(ff_url, "5_Factors")
-    # Parse momentum CSV
     mom_daily = get_csv_from_zip(mom_url, "Momentum")
 
-    # Date columns
     ff_daily["date"] = pd.to_datetime(ff_daily.iloc[:, 0].astype(str), format="%Y%m%d")
     mom_daily["date"] = pd.to_datetime(mom_daily.iloc[:, 0].astype(str), format="%Y%m%d")
     ff_daily = ff_daily.set_index("date")
     mom_daily = mom_daily.set_index("date")
 
-    # Find all factor columns present, case-independent, and build mapping to standardized names
+    # Standardize column names in ff_daily:
     ff_rename_map = {}
     for col in ff_daily.columns:
         col_clean = str(col).strip().upper()
@@ -109,37 +101,31 @@ def download_and_format_kenneth_french_factors(start_date, end_date, freq="W-FRI
         if col_clean == "HML": ff_rename_map[col] = "HML"
         if col_clean == "RMW": ff_rename_map[col] = "RMW"
         if col_clean == "CMA": ff_rename_map[col] = "CMA"
-        # RF is not needed for regression, so we skip
-
     ff_daily = ff_daily.rename(columns=ff_rename_map)
-    actual_cols = [c for c in ["Mkt-RF", "SMB", "HML", "RMW", "CMA"] if c in ff_daily.columns]
-    ff_daily = ff_daily[actual_cols].astype(float) / 100
+    # Only use columns IN ff_daily that are in expected, keep their data!
+    factors_present = [c for c in expected_cols if c in ff_daily.columns]
+    ff_daily = ff_daily[factors_present].astype(float) / 100
+    # Add the rest as 0.0 columns (if missing)
+    for col in expected_cols:
+        if col not in ff_daily.columns:
+            ff_daily[col] = 0.0
 
-    # Momentum: defensive check
-    mom_col = None
-    for c in mom_daily.columns:
-        if str(c).strip().upper() == "WML":
-            mom_col = c
-            break
-        if str(c).strip().upper().startswith("MOM"):
-            mom_col = c
-            mom_daily.rename(columns={c: "WML"}, inplace=True)
-            mom_col = "WML"
-            break
-    if mom_col is None:
-        raise ValueError("Momentum file: Cannot find valid WML/Mom column!")
+    # Defensive: get momentum column if present, rename if needed
+    if "WML" not in mom_daily.columns:
+        for c in mom_daily.columns:
+            if str(c).strip().upper().startswith("MOM"):
+                mom_daily.rename(columns={c: "WML"}, inplace=True)
+
     mom_daily = mom_daily[["WML"]].astype(float) / 100
-
-    # Merge on date, outer join
-    ff_full = ff_daily.join(mom_daily, how="outer").dropna()
+    # Merge on date, fill missing with zeros (not dropna, which could delete all rows if one col is missing)
+    ff_full = ff_daily.join(mom_daily, how="outer")
+    for col in expected_cols:
+        if col not in ff_full.columns:
+            ff_full[col] = 0.0
+    ff_full = ff_full.fillna(0)  # Fill missing rows with zero
 
     resampled = ff_full.resample(freq).sum()
     resampled = resampled[(resampled.index >= pd.to_datetime(start_date)) & (resampled.index <= pd.to_datetime(end_date))]
-    # Ensure all expected columns are present (fill with 0 if missing)
-    for col in expected_cols:
-        if col not in resampled.columns:
-            resampled[col] = 0.0
-    # Enforce order
     return resampled[expected_cols]
 # ---- Utilities ----
 @st.cache_data(ttl=24*3600)
