@@ -51,53 +51,79 @@ INDUSTRY_TO_SECTOR = {
 # ---- Helper: Download and Prepare Kenneth French Factors ----
 @st.cache_data(ttl=7*24*3600)
 def download_and_format_kenneth_french_factors(start_date, end_date, freq="W-FRI"):
-    """
-    Downloads French 5-factor and Momentum daily data, filters, cleans, resamples to weekly, and outputs a DataFrame.
-    Only includes rows with valid 8-digit dates. Handles footer and header issues robustly.
-    """
     ff_url = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_5_Factors_2x3_daily_CSV.zip"
     mom_url = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip"
 
-    def get_csv_from_zip(url, col_name_hint):
+    def get_csv_from_zip(url, col_name_hint=None):
         resp = requests.get(url)
         zf = zipfile.ZipFile(io.BytesIO(resp.content))
         csv_name = [f for f in zf.namelist() if f.endswith('.csv')][0]
         raw = zf.read(csv_name).decode("latin1")
         lines = raw.split("\n")
-
-        # Only keep rows starting with a valid 8-digit date as first column
+        # Only keep rows starting w/ valid 8-digit date as first column
         data_lines = []
         for line in lines:
-            # Comma or semicolon or tab split (for robustness)
             fields = re.split(r'[,\t;]', line.strip())
             if len(fields) == 0:
                 continue
             if re.match(r"^\s*(\d{8})", fields[0]):
                 data_lines.append(line)
         if not data_lines:
-            raise ValueError("No valid date rows found in factor file!!")
+            raise ValueError("No valid date rows found in factor file!")
 
         data_csv = "\n".join(data_lines)
         try:
             df = pd.read_csv(io.StringIO(data_csv))
         except Exception:
             df = pd.read_csv(io.StringIO(data_csv), header=None)
-            if "Momentum" in col_name_hint or col_name_hint == "WML":
+        # Defensive handling for column names
+        # For momentum, assign ["date", "WML"] if only one column after date
+        if col_name_hint == "Momentum" or col_name_hint == "WML":
+            # Find the momentum column name (may have spaces)
+            if df.shape[1] == 2:
                 df.columns = ["date", "WML"]
+            elif df.shape[1] == 1:
+                # Not enough columns; something went wrong!
+                raise ValueError("Momentum CSV does not have enough columns!")
+            else:
+                # Try to detect momentum column in multi-column case
+                possible = [c for c in df.columns if str(c).strip().upper().startswith("MOM")]
+                if possible:
+                    df.rename(columns={possible[0]: "WML"}, inplace=True)
         return df
 
+    # Parse 5-factor CSV
     ff_daily = get_csv_from_zip(ff_url, "5_Factors")
+    # Parse momentum CSV
     mom_daily = get_csv_from_zip(mom_url, "Momentum")
 
     ff_daily["date"] = pd.to_datetime(ff_daily.iloc[:, 0].astype(str), format="%Y%m%d")
     mom_daily["date"] = pd.to_datetime(mom_daily.iloc[:, 0].astype(str), format="%Y%m%d")
     ff_daily = ff_daily.set_index("date")
     mom_daily = mom_daily.set_index("date")
-    # Use only factor columns, convert to decimal returns (from percent)
-    factor_cols = [c for c in ff_daily.columns if c in ["Mkt-RF", "SMB", "HML", "RMW", "CMA", "RF"]]
+
+    # Defensive column check for factors
+    factor_cols = [c for c in ff_daily.columns if str(c).strip().upper() in ["MKT-RF", "SMB", "HML", "RMW", "CMA", "RF"]]
     ff_daily = ff_daily[factor_cols].astype(float) / 100
+
+    # Defensive column check for momentum
+    # If "WML" not present, try alternatives
+    mom_col = None
+    for c in mom_daily.columns:
+        if str(c).strip().upper() == "WML":
+            mom_col = c
+            break
+        if str(c).strip().upper().startswith("MOM"):
+            mom_col = c
+            mom_daily.rename(columns={c: "WML"}, inplace=True)
+            mom_col = "WML"
+            break
+    if mom_col is None:
+        raise ValueError("Momentum file: Cannot find valid WML/Mom column!")
+
     mom_daily = mom_daily[["WML"]].astype(float) / 100
 
+    # Merge and resample
     ff_full = ff_daily.join(mom_daily, how="outer").dropna()
     resampled = ff_full.resample(freq).sum()
     resampled = resampled[(resampled.index >= pd.to_datetime(start_date)) & (resampled.index <= pd.to_datetime(end_date))]
