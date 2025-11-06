@@ -51,6 +51,10 @@ INDUSTRY_TO_SECTOR = {
 # ---- Helper: Download and Prepare Kenneth French Factors ----
 @st.cache_data(ttl=7*24*3600)
 def download_and_format_kenneth_french_factors(start_date, end_date, freq="W-FRI"):
+    """
+    Downloads French 5-factor and Momentum daily data, filters, cleans, resamples to weekly, and outputs a DataFrame.
+    Only includes rows with valid 8-digit dates. Handles footer and header issues robustly.
+    """
     ff_url = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_5_Factors_2x3_daily_CSV.zip"
     mom_url = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip"
 
@@ -59,44 +63,32 @@ def download_and_format_kenneth_french_factors(start_date, end_date, freq="W-FRI
         zf = zipfile.ZipFile(io.BytesIO(resp.content))
         csv_name = [f for f in zf.namelist() if f.endswith('.csv')][0]
         raw = zf.read(csv_name).decode("latin1")
-
-        # Find where the actual data section starts (the first row where the first column is a date YYMMDD or an integer)
         lines = raw.split("\n")
-        data_start = None
-        for i, x in enumerate(lines):
-            if re.match(r"^(\d{8})", x.strip()):
-                data_start = i
-                break
-        # If not found, fallback to skiprows=3
-        if data_start is None:
-            data_start = 3
 
-        # Find where data ends (first row where "Annual" appears)
-        data_end = None
-        for i, x in enumerate(lines):
-            if "Annual" in x or "AVERAGE" in x:
-                data_end = i
-                break
-        if data_end is None:
-            data_end = len(lines)
+        # Only keep rows starting with a valid 8-digit date as first column
+        data_lines = []
+        for line in lines:
+            # Comma or semicolon or tab split (for robustness)
+            fields = re.split(r'[,\t;]', line.strip())
+            if len(fields) == 0:
+                continue
+            if re.match(r"^\s*(\d{8})", fields[0]):
+                data_lines.append(line)
+        if not data_lines:
+            raise ValueError("No valid date rows found in factor file!!")
 
-        # Only keep lines with tabular data
-        data_lines = lines[data_start:data_end]
-        # Reconstruct csv string
         data_csv = "\n".join(data_lines)
-        # Try to read, may need to handle missing column names (momentum, e.g.)
         try:
             df = pd.read_csv(io.StringIO(data_csv))
         except Exception:
             df = pd.read_csv(io.StringIO(data_csv), header=None)
-            # Manually add column names if necessary
             if "Momentum" in col_name_hint or col_name_hint == "WML":
                 df.columns = ["date", "WML"]
         return df
 
     ff_daily = get_csv_from_zip(ff_url, "5_Factors")
     mom_daily = get_csv_from_zip(mom_url, "Momentum")
-    # Parse date column for both
+
     ff_daily["date"] = pd.to_datetime(ff_daily.iloc[:, 0].astype(str), format="%Y%m%d")
     mom_daily["date"] = pd.to_datetime(mom_daily.iloc[:, 0].astype(str), format="%Y%m%d")
     ff_daily = ff_daily.set_index("date")
@@ -106,15 +98,9 @@ def download_and_format_kenneth_french_factors(start_date, end_date, freq="W-FRI
     ff_daily = ff_daily[factor_cols].astype(float) / 100
     mom_daily = mom_daily[["WML"]].astype(float) / 100
 
-    # Merge on date
     ff_full = ff_daily.join(mom_daily, how="outer").dropna()
-
-    # Resample to desired frequency (e.g., weekly returns: sum the daily log-returns and exponentiate)
-    # French factors are simple returns, so weekly total return approx = sum of daily returns for week
     resampled = ff_full.resample(freq).sum()
-    # Clip to start/end date and drop if index not within desired range
     resampled = resampled[(resampled.index >= pd.to_datetime(start_date)) & (resampled.index <= pd.to_datetime(end_date))]
-    # Only keep factor columns expected by rest of the code (drop CMA if not needed)
     out_cols = [c for c in ["Mkt-RF","SMB","HML","RMW","WML"] if c in resampled.columns]
     return resampled[out_cols]
 
