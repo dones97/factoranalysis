@@ -50,48 +50,72 @@ INDUSTRY_TO_SECTOR = {
 # ---- Helper: Download and Prepare Kenneth French Factors ----
 @st.cache_data(ttl=7*24*3600)
 def download_and_format_kenneth_french_factors(start_date, end_date, freq="W-FRI"):
-    # French 5-factor (plus momentum) returns (US market, for illustration)
     ff_url = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_5_Factors_2x3_daily_CSV.zip"
     mom_url = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip"
 
-    def get_csv_from_zip(url, filename_hint):
+    def get_csv_from_zip(url, col_name_hint):
         resp = requests.get(url)
         zf = zipfile.ZipFile(io.BytesIO(resp.content))
-        csv_name = [f for f in zf.namelist() if f.endswith('.csv') or filename_hint in f][0]
-        df = pd.read_csv(zf.open(csv_name), skiprows=3)
-        # Defence: Remove trailing non-numeric rows
-        df = df[df[df.columns[0]].astype(str).str.match(r"^\d+$")]
+        csv_name = [f for f in zf.namelist() if f.endswith('.csv')][0]
+        raw = zf.read(csv_name).decode("latin1")
+
+        # Find where the actual data section starts (the first row where the first column is a date YYMMDD or an integer)
+        lines = raw.split("\n")
+        data_start = None
+        for i, x in enumerate(lines):
+            if re.match(r"^(\d{8})", x.strip()):
+                data_start = i
+                break
+        # If not found, fallback to skiprows=3
+        if data_start is None:
+            data_start = 3
+
+        # Find where data ends (first row where "Annual" appears)
+        data_end = None
+        for i, x in enumerate(lines):
+            if "Annual" in x or "AVERAGE" in x:
+                data_end = i
+                break
+        if data_end is None:
+            data_end = len(lines)
+
+        # Only keep lines with tabular data
+        data_lines = lines[data_start:data_end]
+        # Reconstruct csv string
+        data_csv = "\n".join(data_lines)
+        # Try to read, may need to handle missing column names (momentum, e.g.)
+        try:
+            df = pd.read_csv(io.StringIO(data_csv))
+        except Exception:
+            df = pd.read_csv(io.StringIO(data_csv), header=None)
+            # Manually add column names if necessary
+            if "Momentum" in col_name_hint or col_name_hint == "WML":
+                df.columns = ["date", "WML"]
         return df
 
-    # Get daily factors
     ff_daily = get_csv_from_zip(ff_url, "5_Factors")
     mom_daily = get_csv_from_zip(mom_url, "Momentum")
-
-    # Parse date as YYMMDD, typical for French data
-    ff_daily["date"] = pd.to_datetime(ff_daily[ff_daily.columns[0]], format="%Y%m%d")
-    mom_daily["date"] = pd.to_datetime(mom_daily[mom_daily.columns[0]], format="%Y%m%d")
-
-    # Select and rename columns
-    # Convert from percent to decimal (e.g., 0.05% to 0.0005)
-    ff_daily = ff_daily.rename(columns={
-        "Mkt-RF": "Mkt-RF", "SMB": "SMB", "HML": "HML",
-        "RMW": "RMW", "CMA": "CMA", "RF": "RF"
-    })
-    mom_daily = mom_daily.rename(columns={"Mom   ": "WML"})
+    # Parse date column for both
+    ff_daily["date"] = pd.to_datetime(ff_daily.iloc[:, 0].astype(str), format="%Y%m%d")
+    mom_daily["date"] = pd.to_datetime(mom_daily.iloc[:, 0].astype(str), format="%Y%m%d")
     ff_daily = ff_daily.set_index("date")
     mom_daily = mom_daily.set_index("date")
-    ff_daily = ff_daily[["Mkt-RF","SMB","HML","RMW","CMA","RF"]].astype(float) / 100
+    # Use only factor columns, convert to decimal returns (from percent)
+    factor_cols = [c for c in ff_daily.columns if c in ["Mkt-RF", "SMB", "HML", "RMW", "CMA", "RF"]]
+    ff_daily = ff_daily[factor_cols].astype(float) / 100
     mom_daily = mom_daily[["WML"]].astype(float) / 100
 
-    # Merge on date and drop missing
+    # Merge on date
     ff_full = ff_daily.join(mom_daily, how="outer").dropna()
 
-    # Resample to desired frequency, e.g. weekly
-    resampled = ff_full.resample(freq).sum()  # sum of daily returns for week ≈ weekly return
-    # Restrict to start/end date
+    # Resample to desired frequency (e.g., weekly returns: sum the daily log-returns and exponentiate)
+    # French factors are simple returns, so weekly total return approx = sum of daily returns for week
+    resampled = ff_full.resample(freq).sum()
+    # Clip to start/end date and drop if index not within desired range
     resampled = resampled[(resampled.index >= pd.to_datetime(start_date)) & (resampled.index <= pd.to_datetime(end_date))]
-    # Only use factors, not risk free
-    return resampled
+    # Only keep factor columns expected by rest of the code (drop CMA if not needed)
+    out_cols = [c for c in ["Mkt-RF","SMB","HML","RMW","WML"] if c in resampled.columns]
+    return resampled[out_cols]
 
 # ---- Utilities ----
 @st.cache_data(ttl=24*3600)
