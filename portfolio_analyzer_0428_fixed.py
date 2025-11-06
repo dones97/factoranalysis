@@ -8,10 +8,10 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from pandas_datareader.data import DataReader
 import io
-import requests   # <-- Ensure this is with other imports, not duplicated later
+import requests
 import zipfile
 import os
-import re   # <-- Ensure this is with other imports, not duplicated later
+import re
 
 st.set_page_config(layout="wide")
 st.title("Stock & Portfolio Analyzer with Editable Portfolios (French Factors)")
@@ -48,7 +48,7 @@ INDUSTRY_TO_SECTOR = {
     # Add more as you encounter new industries in your portfolios
 }
 
-# ---- Helper: Download and Prepare Kenneth French Factors ----
+# ---- Robust Kenneth French Factor Loader ----
 @st.cache_data(ttl=7*24*3600)
 def download_and_format_kenneth_french_factors(start_date, end_date, freq="W-FRI"):
     ff_url = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_5_Factors_2x3_daily_CSV.zip"
@@ -72,16 +72,20 @@ def download_and_format_kenneth_french_factors(start_date, end_date, freq="W-FRI
         if not data_lines:
             raise ValueError("No valid date rows found in factor file!")
         data_csv = "\n".join(data_lines)
-        df = pd.read_csv(io.StringIO(data_csv))
-        # Defensive for momentum
+        try:
+            df = pd.read_csv(io.StringIO(data_csv))
+        except Exception:
+            df = pd.read_csv(io.StringIO(data_csv), header=None)
+        # For momentum, assign ["date", "WML"] if only one column after date
         if col_name_hint == "Momentum" or col_name_hint == "WML":
-            # If only 2 columns, assign ["date", "WML"]
             if df.shape[1] == 2:
                 df.columns = ["date", "WML"]
-            # Check for columns like "Mom   "
-            for c in df.columns:
-                if str(c).strip().upper().startswith("MOM"):
-                    df.rename(columns={c: "WML"}, inplace=True)
+            elif df.shape[1] == 1:
+                raise ValueError("Momentum CSV does not have enough columns!")
+            else:
+                possible = [c for c in df.columns if str(c).strip().upper().startswith("MOM")]
+                if possible:
+                    df.rename(columns={possible[0]: "WML"}, inplace=True)
         return df
 
     ff_daily = get_csv_from_zip(ff_url, "5_Factors")
@@ -101,32 +105,35 @@ def download_and_format_kenneth_french_factors(start_date, end_date, freq="W-FRI
         if col_clean == "HML": ff_rename_map[col] = "HML"
         if col_clean == "RMW": ff_rename_map[col] = "RMW"
         if col_clean == "CMA": ff_rename_map[col] = "CMA"
+        # RF is not used here
+
     ff_daily = ff_daily.rename(columns=ff_rename_map)
-    # Only use columns IN ff_daily that are in expected, keep their data!
-    factors_present = [c for c in expected_cols if c in ff_daily.columns]
+    # Never keep "WML" from ff_daily! Use only the dedicated file.
+    if "WML" in ff_daily.columns:
+        ff_daily = ff_daily.drop(columns=["WML"])
+    factors_present = [c for c in ["Mkt-RF", "SMB", "HML", "RMW", "CMA"] if c in ff_daily.columns]
     ff_daily = ff_daily[factors_present].astype(float) / 100
-    # Add the rest as 0.0 columns (if missing)
     for col in expected_cols:
-        if col not in ff_daily.columns:
+        if col not in ff_daily.columns and col != "WML":
             ff_daily[col] = 0.0
 
-    # Defensive: get momentum column if present, rename if needed
+    # Momentum: defensive check
     if "WML" not in mom_daily.columns:
         for c in mom_daily.columns:
             if str(c).strip().upper().startswith("MOM"):
                 mom_daily.rename(columns={c: "WML"}, inplace=True)
-
     mom_daily = mom_daily[["WML"]].astype(float) / 100
-    # Merge on date, fill missing with zeros (not dropna, which could delete all rows if one col is missing)
+
+    # Merge on date, outer join
     ff_full = ff_daily.join(mom_daily, how="outer")
     for col in expected_cols:
         if col not in ff_full.columns:
             ff_full[col] = 0.0
-    ff_full = ff_full.fillna(0)  # Fill missing rows with zero
-
+    ff_full = ff_full.fillna(0)
     resampled = ff_full.resample(freq).sum()
     resampled = resampled[(resampled.index >= pd.to_datetime(start_date)) & (resampled.index <= pd.to_datetime(end_date))]
     return resampled[expected_cols]
+
 # ---- Utilities ----
 @st.cache_data(ttl=24*3600)
 def get_risk_free_rate_series(start_date, end_date, default_rate=6.5):
@@ -170,7 +177,6 @@ def get_sector_info(ticker):
         if industry not in INDUSTRY_TO_SECTOR:
             st.write(f"Unmapped industry: {industry} for ticker {ticker}")
         return INDUSTRY_TO_SECTOR.get(industry, industry)
-    # Try to map industry to sector
     if industry:
         return INDUSTRY_TO_SECTOR.get(industry, industry)
     return "Unknown"
@@ -182,7 +188,7 @@ def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
         actual_years = (wr.index[-1] - wr.index[0]).days / 365.25
     if wr is None or wr.empty or ff is None or ff.empty:
         return None
-    rf = get_risk_free_rate_series(sd, ed, default_rate=st.session_state["current_rf"])
+    rf = get_risk_free_rate_series(sd, ed, default_rate=st.session_state.get("current_rf", 6.5))
     weekly_rf = (1 + rf) ** (1/52) - 1
     exc = wr - weekly_rf.reindex(wr.index, method="ffill")
     aligned = pd.concat([exc, ff], axis=1).dropna()
@@ -195,7 +201,7 @@ def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
     avg = ff.mean()
     exp_w = betas.get("const", 0) + sum(betas.get(f, 0) * avg[f] for f in ff.columns if f in avg)
     exp_ann_exc = (1 + exp_w) ** 52 - 1
-    rf_val = st.session_state["current_rf"] / 100
+    rf_val = st.session_state.get("current_rf", 6.5) / 100
     exp_ann = rf_val + exp_ann_exc
     covf = ff.cov().values
     fvals = betas.drop("const", errors="ignore").values
@@ -305,7 +311,7 @@ def compute_portfolio_std_from_cov(df, sd, ed):
     return np.sqrt(w_arr @ cov @ w_arr) * np.sqrt(52)
 
 def compute_portfolio_regression_metrics(df, sd, ed, ff):
-    rf = get_risk_free_rate_series(sd, ed, default_rate=st.session_state["current_rf"])
+    rf = get_risk_free_rate_series(sd, ed, default_rate=st.session_state.get("current_rf", 6.5))
     weekly_rf = (1 + rf) ** (1/52) - 1
     total_mv = df["MarketValue"].sum()
     parts = []
@@ -332,7 +338,7 @@ def compute_portfolio_regression_metrics(df, sd, ed, ff):
     avg = ff.mean()
     exp_w = betas.get("const", 0) + sum(betas.get(f, 0) * avg[f] for f in ff.columns if f in avg)
     exp_ann_exc = (1 + exp_w) ** 52 - 1
-    rf_val = st.session_state["current_rf"] / 100
+    rf_val = st.session_state.get("current_rf", 6.5) / 100
     exp_ann = rf_val + exp_ann_exc
     covf = ff.cov().values
     fvals = betas.drop("const", errors="ignore").values
@@ -364,13 +370,11 @@ with tabs[0]:
     rf_rate = st.number_input("Risk-Free Rate (%)", 6.5, step=0.1, key="sa_rf")
     st.session_state["current_rf"] = rf_rate
 
-    # --- Show Sector, Industry, Market Cap ---
     try:
         info = yf.Ticker(ticker).info
         sector = info.get("sector", "Unknown")
         industry = info.get("industry", "Unknown")
         market_cap = info.get("marketCap", None)
-        # Format market cap as e.g. ₹12,345 Cr or Unknown
         if market_cap is not None and market_cap > 0:
             market_cap_display = f"₹{market_cap/1e7:,.0f} Cr"
         else:
@@ -423,21 +427,18 @@ with tabs[0]:
             exp_ret_high = (rf_val + exp_ret_high) * 100
             exp_ret = met['Exp_Annual_Rtn'] * 100
 
-            # --- CI for Standard Deviation ---
             std = met["Annual_Std"] * 100
             ci_std = (std, std, std)
             if n > 1:
                 se_std = std / np.sqrt(2 * (n - 1))
                 ci_std = (std - 1.96 * se_std, std, std + 1.96 * se_std)
 
-            # --- CI for Sharpe Ratio ---
             sharpe = met["Sharpe"]
             ci_sharpe = (sharpe, sharpe, sharpe)
             if n > 0:
                 se_sharpe = np.sqrt((1 + 0.5 * sharpe ** 2) / n)
                 ci_sharpe = (sharpe - 1.96 * se_sharpe, sharpe, sharpe + 1.96 * se_sharpe)
 
-            # Display metrics and scales, with columns closer together
             for label, value, ci, unit in [
                 ("Expected Annual Return", exp_ret, (exp_ret_low, exp_ret, exp_ret_high), "%"),
                 ("Annual Std Dev", ci_std[1], ci_std, "%"),
@@ -454,7 +455,6 @@ with tabs[0]:
                         compact_metric_scale(label, ci[0], ci[1], ci[2], unit),
                         use_container_width=False
                     )
-
             st.subheader("Model Statistics")
             st.markdown(f"• R²: {met['R2']}   • Adj R²: {met['Adj_R2']}")
 
