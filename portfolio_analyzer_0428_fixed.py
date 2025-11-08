@@ -56,7 +56,31 @@ def get_risk_free_rate_series(start_date, end_date, default_rate=6.5):
 
 @st.cache_data(ttl=24*3600)
 def fetch_ff_factors(start_date, end_date):
-    df = yf.download("^CRSLDX", start=start_date, end=end_date, progress=False, auto_adjust=False)
+    \"\"\"Load factors in order of priority:
+    1) st.session_state['factor_csv_current'] (uploaded weekly W-FRI CSV with Mkt-RF,...,RF)
+    2) repo CSV at data/em_factors_weekly.csv if st.session_state['use_repo_em_current'] is True
+    3) CAPM fallback: construct Mkt-RF from market index minus RF
+    \"\"\"
+    # 1) Uploaded CSV
+    up = st.session_state.get("factor_csv_current")
+    if up is not None:
+        ff = pd.read_csv(up, parse_dates=True, index_col=0)
+        ff = ff.asfreq("W-FRI")
+        ff = ff.loc[(ff.index >= pd.to_datetime(start_date)) & (ff.index <= pd.to_datetime(end_date))]
+        return ff.dropna(how="all")
+
+    # 2) Repo EM weekly CSV
+    if st.session_state.get("use_repo_em_current", False):
+        try:
+            ff = pd.read_csv("data/em_factors_weekly.csv", parse_dates=True, index_col=0)
+            ff = ff.asfreq("W-FRI")
+            ff = ff.loc[(ff.index >= pd.to_datetime(start_date)) & (ff.index <= pd.to_datetime(end_date))]
+            return ff.dropna(how="all")
+        except Exception:
+            pass
+
+    # 3) CAPM fallback using ^CRSLDX (as in original), with consistent RF
+    df = yf.download("^CRSLDX", start=start_date, end=end_date, progress=False, auto_adjust=True)
     if df.empty:
         return None
     if isinstance(df.columns, pd.MultiIndex):
@@ -65,26 +89,26 @@ def fetch_ff_factors(start_date, end_date):
     mkt = df[close_col].resample("W-FRI").last().pct_change().dropna()
     if len(mkt) < 2:
         return None
-    np.random.seed(42)
-    smb = pd.Series(np.random.normal(0.001, 0.02, len(mkt)), index=mkt.index)
-    hml = pd.Series(np.random.normal(0.0015, 0.025, len(mkt)), index=mkt.index)
-    rmw = pd.Series(np.random.normal(0.001, 0.02, len(mkt)), index=mkt.index)
-    wml = pd.Series(np.random.normal(0.002, 0.03, len(mkt)), index=mkt.index)
-    return pd.DataFrame({"Mkt-RF": mkt, "SMB": smb, "HML": hml, "RMW": rmw, "WML": wml})
+    rf_weekly = ((1 + get_risk_free_rate_series(start_date, end_date, default_rate=st.session_state.get("current_rf", 6.5))) ** (1/52) - 1)
+    rf_weekly = rf_weekly.reindex(mkt.index).ffill()
+    mktrf = (mkt - rf_weekly).dropna()
+    return pd.DataFrame({"Mkt-RF": mktrf, "RF": rf_weekly.reindex(mktrf.index)})
 
 @st.cache_data(ttl=24*3600)
 def fetch_price_df(ticker, start_date, end_date):
     if not ticker or pd.isna(ticker):
         return None
-    df = yf.download(ticker.strip().upper(), start=start_date, end=end_date, progress=False, auto_adjust=False)
+    df = yf.download(ticker.strip().upper(), start=start_date, end=end_date, progress=False, auto_adjust=True)
     if df.empty:
         return None
+    # After auto_adjust=True, Close is adjusted. Ensure Close exists.
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = ["_".join(c) for c in df.columns]
-    cols = [c for c in df.columns if c.lower().startswith("close")]
-    if not cols:
-        return None
-    df["Close"] = df[cols[0]]
+    if "Close" not in df.columns:
+        cols = [c for c in df.columns if c.lower().startswith("close")]
+        if not cols:
+            return None
+        df["Close"] = df[cols[0]]
     return df
 
 @st.cache_data(ttl=24*3600)
@@ -117,35 +141,62 @@ def compute_factor_metrics_for_stock(tkr, sd, ed, ff):
         actual_years = (wr.index[-1] - wr.index[0]).days / 365.25
     if wr is None or wr.empty or ff is None or ff.empty:
         return None
-    rf = get_risk_free_rate_series(sd, ed, default_rate=st.session_state["current_rf"])
-    weekly_rf = (1 + rf) ** (1/52) - 1
-    exc = wr - weekly_rf.reindex(wr.index, method="ffill")
-    data = pd.concat([exc, ff], axis=1).dropna()
+
+    # RF weekly (prefer ff['RF'] if provided)
+    if "RF" in ff.columns:
+        weekly_rf = ff["RF"].reindex(wr.index).ffill()
+    else:
+        rf = get_risk_free_rate_series(sd, ed, default_rate=st.session_state.get("current_rf", 6.5))
+        weekly_rf = (1 + rf) ** (1/52) - 1
+        weekly_rf = weekly_rf.reindex(wr.index).ffill()
+
+    exc = wr - weekly_rf
+    # Drop RF from regressors
+    ff_no_rf = ff.drop(columns=["RF"], errors="ignore")
+    data = pd.concat([exc, ff_no_rf], axis=1).dropna()
     if len(data) < 5:
         return None
+
     y = data.iloc[:, 0]
     X = sm.add_constant(data.iloc[:, 1:])
     m = sm.OLS(y, X).fit()
     betas = m.params
-    avg = ff.mean()
-    exp_w = betas.get("const", 0) + sum(betas.get(f, 0) * avg[f] for f in ff.columns)
+    avg = ff_no_rf.mean()
+    exp_w = betas.get("const", 0.0) + sum(betas.get(f, 0.0) * avg.get(f, 0.0) for f in ff_no_rf.columns)
     exp_ann_exc = (1 + exp_w) ** 52 - 1
-    rf_val = st.session_state["current_rf"] / 100
-    exp_ann = rf_val + exp_ann_exc
-    covf = ff.cov().values
-    fvals = betas.drop("const", errors="ignore").values
-    var_w = fvals @ covf @ fvals + m.mse_resid
+
+    # Add back annual RF consistently
+    if "RF" in ff.columns:
+        rf_weekly_last = ff["RF"].dropna().iloc[-1]
+    else:
+        rf_weekly_last = weekly_rf.dropna().iloc[-1]
+    rf_ann_scalar = (1 + rf_weekly_last) ** 52 - 1
+    exp_ann = rf_ann_scalar + exp_ann_exc
+
+    covf = ff_no_rf.cov().values if not ff_no_rf.empty else np.array([[0.0]])
+    fvals = betas.drop("const", errors="ignore").reindex(ff_no_rf.columns).fillna(0.0).values
+    var_w = float(fvals @ covf @ fvals) + m.mse_resid
     std_ann = np.sqrt(var_w) * np.sqrt(52)
-    sharpe = exp_ann / std_ann if std_ann > 0 else np.nan
+    sharpe = (exp_ann - rf_ann_scalar) / std_ann if std_ann > 0 else np.nan
+
+    # Factor contributions that reconcile with exp_ann_exc
+    alpha_w = betas.get("const", 0.0)
+    contr_w = {fac: betas.get(fac, 0.0) * avg.get(fac, 0.0) for fac in ff_no_rf.columns}
+    if abs(exp_w) > 1e-12:
+        contr_ann = {k: (v/exp_w) * ((1 + exp_w) ** 52 - 1) for k, v in contr_w.items()}
+        contr_ann["Alpha"] = (alpha_w/exp_w) * ((1 + exp_w) ** 52 - 1)
+    else:
+        contr_ann = {k: 0.0 for k in ff_no_rf.columns}
+        contr_ann["Alpha"] = 0.0
+
     return {
         "Ticker": tkr,
         "Exp_Annual_Rtn": round(exp_ann, 4),
         "Annual_Std": round(std_ann, 4),
         "Sharpe": round(sharpe, 2),
         "Betas": betas,
+        "Contrib (Ann Excess)": contr_ann,
         "Model": m,
-        "R2": round(m.rsquared, 4),
-        "Adj_R2": round(m.rsquared_adj, 4),
     }
 
 # ---- Extended bar compact_metric_scale ----
@@ -207,7 +258,7 @@ def plot_return_contributions_by_stock(df, rf_pct, display_map, key):
     dfc = df.copy()
     dfc["DisplayTicker"] = dfc["Ticker"].map(display_map).fillna(dfc["Ticker"])
     dfc["Weight"] = dfc["MarketValue"] / tot
-    dfc["Total_Return"] = (rf_pct / 100 + dfc["Exp_Annual_Rtn"]) * 100
+    dfc["Total_Return"] = dfc["Exp_Annual_Rtn"] * 100  # Exp_Annual_Rtn already includes RF
     dfc["Return_Contribution"] = (dfc["Weight"] * dfc["Total_Return"]).round(2)
     fig = px.bar(
         dfc,
@@ -226,6 +277,31 @@ def compute_weighted_portfolio_metrics(df):
         return None
     w = df["MarketValue"] / df["MarketValue"].sum()
     return (w * df["Exp_Annual_Rtn"]).sum()
+
+
+def compute_portfolio_std_from_factor_model(dfi, ff):
+    # Uses models & betas from dfi rows; factor covariance from ff (exclude RF).
+    fac_cols = [c for c in ff.columns if c.upper() != "RF"]
+    if not fac_cols:
+        return np.nan
+    # Build B
+    B_rows = []
+    resid_vars = []
+    for _, row in dfi.iterrows():
+        betas = row.get("Betas", None)
+        model = row.get("Model", None)
+        if betas is None or model is None:
+            return np.nan
+        B_rows.append([betas.get(c, 0.0) for c in fac_cols])
+        resid_vars.append(float(model.mse_resid))
+    B = np.array(B_rows)
+    Sigma_f = ff[fac_cols].cov().values
+    D = np.diag(resid_vars)
+    w = (dfi["MarketValue"] / dfi["MarketValue"].sum()).values.reshape(-1,1)
+    Sigma_p = B @ Sigma_f @ B.T + D
+    var_w = float(w.T @ Sigma_p @ w)
+    return np.sqrt(var_w) * np.sqrt(52)
+
 
 def compute_portfolio_std_from_cov(df, sd, ed):
     mv_by = df.groupby("Ticker")["MarketValue"].sum()
@@ -329,7 +405,12 @@ with tabs[0]:
         """,
         unsafe_allow_html=True
     )
-
+    # Factor source (Stock tab)
+    st.markdown("### Factor Source")
+    up_sa = st.file_uploader("Upload weekly factor CSV (W-FRI)", type=["csv"], key="factor_csv_sa")
+    use_repo_sa = st.checkbox("Use repo EM factors CSV (data/em_factors_weekly.csv)", value=True, key="use_repo_em_sa")
+    st.session_state["factor_csv_current"] = up_sa
+    st.session_state["use_repo_em_current"] = use_repo_sa
 
     ff = fetch_ff_factors(sd, ed)
     stk = fetch_price_df(ticker, sd, ed)
@@ -542,6 +623,13 @@ with tabs[1]:
         rf2 = st.number_input("Risk-Free Rate (%)", 6.5, step=0.1, key="pa_rf2")
         st.session_state["current_rf"] = rf2
 
+        # Factor source (Portfolio tab)
+        st.markdown("### Factor Source")
+        up_pa = st.file_uploader("Upload weekly factor CSV (W-FRI)", type=["csv"], key="factor_csv_pa")
+        use_repo_pa = st.checkbox("Use repo EM factors CSV (data/em_factors_weekly.csv)", value=True, key="use_repo_em_pa")
+        st.session_state["factor_csv_current"] = up_pa
+        st.session_state["use_repo_em_current"] = use_repo_pa
+
         ff2 = fetch_ff_factors(sd2, ed2)
         if base.empty or ff2 is None:
             st.error("No data to analyze.")
@@ -557,7 +645,7 @@ with tabs[1]:
                 last = [fetch_price_df(t, sd2, ed2)["Close"].iloc[-1] for t in dfi["Ticker"]]
                 dfi["MarketValue"] = [dfp[dfp["Ticker"]==t]["Current Qty"].iloc[0]*p for t,p in zip(dfi["Ticker"], last)]
                 wret = compute_weighted_portfolio_metrics(dfi)
-                wstd = compute_portfolio_std_from_cov(dfi, sd2, ed2)
+                wstd = compute_portfolio_std_from_factor_model(dfi, ff2)
                 rmet = compute_portfolio_regression_metrics(dfi, sd2, ed2, ff2)
                 return dfi, wret, wstd, rmet
 
