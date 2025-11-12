@@ -148,12 +148,13 @@ class FactorCalculator:
 
     def get_profitability(self) -> Dict[str, float]:
         """
-        Calculate operating profitability (Operating Income / Book Equity).
+        Calculate operating profitability (Operating Income / Revenue).
+        This is the operating margin, a key profitability metric.
 
         Returns:
             Dictionary mapping ticker to profitability metric
         """
-        print("Calculating profitability metrics...")
+        print("Calculating profitability metrics (Operating Margin)...")
         profitability = {}
 
         for ticker in self.constituents:
@@ -162,21 +163,27 @@ class FactorCalculator:
 
                 # Get financial statements
                 financials = ticker_obj.financials
-                balance_sheet = ticker_obj.balance_sheet
 
-                if not financials.empty and not balance_sheet.empty:
+                if not financials.empty:
                     # Get most recent data
-                    op_income = financials.loc['Operating Income'].iloc[0] if 'Operating Income' in financials.index else 0
+                    op_income = None
+                    revenue = None
 
-                    # Try multiple names for equity
-                    equity = 0
-                    for equity_name in ['Stockholders Equity', 'Total Stockholder Equity', 'Common Stock Equity']:
-                        if equity_name in balance_sheet.index:
-                            equity = balance_sheet.loc[equity_name].iloc[0]
+                    # Try to get Operating Income
+                    if 'Operating Income' in financials.index:
+                        op_income = financials.loc['Operating Income'].iloc[0]
+                    elif 'EBIT' in financials.index:
+                        op_income = financials.loc['EBIT'].iloc[0]
+
+                    # Try to get Revenue (multiple possible names)
+                    for revenue_name in ['Total Revenue', 'Revenue', 'Operating Revenue']:
+                        if revenue_name in financials.index:
+                            revenue = financials.loc[revenue_name].iloc[0]
                             break
 
-                    if equity > 0 and op_income is not None:
-                        profitability[ticker] = op_income / equity
+                    # Calculate operating margin
+                    if revenue is not None and revenue > 0 and op_income is not None:
+                        profitability[ticker] = op_income / revenue
             except:
                 pass
 
