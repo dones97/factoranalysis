@@ -31,7 +31,7 @@ I've successfully implemented a **long-term solution** for calculating accurate 
 
 4. **`data/ff_factors.parquet`** - Pre-calculated factors
    - 521 weeks of data (10 years)
-   - 5 factors: Mkt-RF, SMB, HML, RMW, WML
+   - 6 factors: Mkt-RF, SMB, HML, RMW, CMA, WML
    - Efficient binary format
 
 5. **`data/ff_factors.csv`** - Same data in CSV
@@ -68,10 +68,11 @@ I've successfully implemented a **long-term solution** for calculating accurate 
 - HML = Value returns - Growth returns
 
 #### 3. **RMW (Robust Minus Weak / Profitability)**
-- Sort stocks by Operating Income / Book Equity
-- Robust portfolio = top 30% profitability
-- Weak portfolio = bottom 30% profitability
+- Sort stocks by Operating Margin (Operating Income / Revenue)
+- Robust portfolio = top 30% operating margin
+- Weak portfolio = bottom 30% operating margin
 - RMW = Robust returns - Weak returns
+- Operating margin measures efficiency of operations
 
 #### 4. **WML (Winners Minus Losers / Momentum)**
 - Sort stocks by 12-month returns (skip recent month)
@@ -79,7 +80,14 @@ I've successfully implemented a **long-term solution** for calculating accurate 
 - Losers portfolio = bottom 30% momentum
 - WML = Winner returns - Loser returns
 
-#### 5. **Mkt-RF (Market Risk Premium)**
+#### 5. **CMA (Conservative Minus Aggressive / Investment)**
+- Sort stocks by asset growth (year-over-year change in total assets)
+- Conservative portfolio = bottom 30% asset growth
+- Aggressive portfolio = top 30% asset growth
+- CMA = Conservative returns - Aggressive returns
+- Low asset growth firms tend to have higher returns
+
+#### 6. **Mkt-RF (Market Risk Premium)**
 - Weekly returns of NIFTY 50 index (^NSEI)
 
 ## 📈 Current Factor Statistics (Annualized)
@@ -92,7 +100,10 @@ From 10 years of data (2015-2025):
 | SMB    | -4.10%      | 7.20%      |
 | HML    | -1.34%      | 15.78%     |
 | RMW    | -2.33%      | 13.26%     |
+| CMA    | TBD         | TBD        |
 | WML    | 9.83%       | 11.92%     |
+
+*Note: CMA statistics will be updated after first calculation run*
 
 ## 🚀 Deployment Steps
 
@@ -224,9 +235,9 @@ Future improvements you could make:
    - More representative of market
 
 4. **Additional factors**:
-   - CMA (Conservative Minus Aggressive)
    - BAB (Betting Against Beta)
    - Quality factors
+   - Liquidity factors
 
 5. **Incremental updates**:
    - Only calculate new periods
