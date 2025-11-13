@@ -26,7 +26,7 @@ This system pre-calculates Fama-French style factors (SMB, HML, RMW, WML) from c
 ┌─────────────────────────────────────────────────────────────┐
 │              data/ff_factors.parquet                        │
 │                                                             │
-│  Columns: Mkt-RF, SMB, HML, RMW, WML                       │
+│  Columns: Mkt-RF, SMB, HML, RMW, CMA, WML                  │
 │  Index: Weekly Friday dates                                │
 │  Format: Parquet (compressed time series)                  │
 └─────────────────────────┬───────────────────────────────────┘
@@ -59,11 +59,12 @@ This system pre-calculates Fama-French style factors (SMB, HML, RMW, WML) from c
 - **Factor**: Return of Value portfolio - Return of Growth portfolio
 
 ### 3. RMW (Robust Minus Weak / Profitability)
-- **Method**: Sort all stocks by Operating Profitability (Operating Income / Book Equity)
+- **Method**: Sort all stocks by Operating Margin (Operating Income / Revenue)
 - **Portfolios**:
-  - Robust (High Profit): Top 30% by profitability
-  - Weak (Low Profit): Bottom 30% by profitability
+  - Robust (High Margin): Top 30% by operating margin
+  - Weak (Low Margin): Bottom 30% by operating margin
 - **Factor**: Return of Robust portfolio - Return of Weak portfolio
+- **Note**: Operating margin is a cleaner measure of profitability efficiency
 
 ### 4. WML (Winners Minus Losers / Momentum)
 - **Method**: Sort all stocks by past 12-month return (skipping most recent month)
@@ -72,7 +73,15 @@ This system pre-calculates Fama-French style factors (SMB, HML, RMW, WML) from c
   - Losers: Bottom 30% by momentum
 - **Factor**: Return of Winners portfolio - Return of Losers portfolio
 
-### 5. Mkt-RF (Market Risk Premium)
+### 5. CMA (Conservative Minus Aggressive / Investment)
+- **Method**: Sort all stocks by asset growth rate (year-over-year change in total assets)
+- **Portfolios**:
+  - Conservative (Low Growth): Bottom 30% by asset growth
+  - Aggressive (High Growth): Top 30% by asset growth
+- **Factor**: Return of Conservative portfolio - Return of Aggressive portfolio
+- **Note**: Asset growth measures investment aggressiveness; low growth firms tend to have higher returns
+
+### 6. Mkt-RF (Market Risk Premium)
 - **Method**: Weekly returns of NIFTY 50 index (^NSEI)
 
 ## Files
@@ -145,7 +154,7 @@ The Streamlit app has three levels of fallback:
    - Mkt-RF: NIFTY 50 (^NSEI)
    - SMB: NIFTY Midcap 50 (^NSEMDCP50) - NIFTY 50
    - HML: NIFTY Value 20 (NV20.NS) - NIFTY 50
-   - RMW/WML: Alpha 50 (ALPHA.NS) with scaling
+   - RMW/CMA/WML: Alpha 50 (ALPHA.NS) with scaling
 
 ## Performance Considerations
 
@@ -188,7 +197,7 @@ The workflow will:
 Potential improvements:
 1. Add historical constituent data (avoid survivorship bias)
 2. Implement value-weighted portfolio returns
-3. Add more factors (CMA, BAB, etc.)
+3. Add more factors (BAB, Quality, etc.)
 4. Store factor characteristics (correlations, volatilities)
 5. Add data quality checks and validation
 6. Implement incremental updates (only calculate new periods)
