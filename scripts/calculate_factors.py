@@ -129,19 +129,31 @@ class FactorCalculator:
         Returns:
             Dictionary mapping ticker to B/M ratio
         """
+        import time
         print("Calculating book-to-market ratios...")
         bm_ratios = {}
+        batch_size = 50
+        total = len(self.constituents)
 
-        for ticker in self.constituents:
-            try:
-                info = yf.Ticker(ticker).info
-                book_value = info.get('bookValue', 0)
-                current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+        for i in range(0, total, batch_size):
+            batch = self.constituents[i:i+batch_size]
+            print(f"  Processing B/M batch {i//batch_size + 1}/{(total + batch_size - 1)//batch_size} ({len(batch)} stocks)...")
 
-                if book_value > 0 and current_price > 0:
-                    bm_ratios[ticker] = book_value / current_price
-            except:
-                pass
+            for ticker in batch:
+                try:
+                    info = yf.Ticker(ticker).info
+                    book_value = info.get('bookValue', 0)
+                    current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+
+                    if book_value > 0 and current_price > 0:
+                        bm_ratios[ticker] = book_value / current_price
+                except Exception as e:
+                    # Silently skip errors but could log them
+                    pass
+
+            # Rate limiting: pause between batches
+            if i + batch_size < total:
+                time.sleep(2)  # 2 second delay between batches
 
         print(f"Calculated B/M ratios for {len(bm_ratios)} stocks")
         return bm_ratios
@@ -154,38 +166,50 @@ class FactorCalculator:
         Returns:
             Dictionary mapping ticker to profitability metric
         """
+        import time
         print("Calculating profitability metrics (Operating Margin)...")
         profitability = {}
+        batch_size = 50
+        total = len(self.constituents)
 
-        for ticker in self.constituents:
-            try:
-                ticker_obj = yf.Ticker(ticker)
+        for i in range(0, total, batch_size):
+            batch = self.constituents[i:i+batch_size]
+            print(f"  Processing profitability batch {i//batch_size + 1}/{(total + batch_size - 1)//batch_size} ({len(batch)} stocks)...")
 
-                # Get financial statements
-                financials = ticker_obj.financials
+            for ticker in batch:
+                try:
+                    ticker_obj = yf.Ticker(ticker)
 
-                if not financials.empty:
-                    # Get most recent data
-                    op_income = None
-                    revenue = None
+                    # Get financial statements
+                    financials = ticker_obj.financials
 
-                    # Try to get Operating Income
-                    if 'Operating Income' in financials.index:
-                        op_income = financials.loc['Operating Income'].iloc[0]
-                    elif 'EBIT' in financials.index:
-                        op_income = financials.loc['EBIT'].iloc[0]
+                    if not financials.empty:
+                        # Get most recent data
+                        op_income = None
+                        revenue = None
 
-                    # Try to get Revenue (multiple possible names)
-                    for revenue_name in ['Total Revenue', 'Revenue', 'Operating Revenue']:
-                        if revenue_name in financials.index:
-                            revenue = financials.loc[revenue_name].iloc[0]
-                            break
+                        # Try to get Operating Income
+                        if 'Operating Income' in financials.index:
+                            op_income = financials.loc['Operating Income'].iloc[0]
+                        elif 'EBIT' in financials.index:
+                            op_income = financials.loc['EBIT'].iloc[0]
 
-                    # Calculate operating margin
-                    if revenue is not None and revenue > 0 and op_income is not None:
-                        profitability[ticker] = op_income / revenue
-            except:
-                pass
+                        # Try to get Revenue (multiple possible names)
+                        for revenue_name in ['Total Revenue', 'Revenue', 'Operating Revenue']:
+                            if revenue_name in financials.index:
+                                revenue = financials.loc[revenue_name].iloc[0]
+                                break
+
+                        # Calculate operating margin
+                        if revenue is not None and revenue > 0 and op_income is not None:
+                            profitability[ticker] = op_income / revenue
+                except Exception as e:
+                    # Silently skip errors
+                    pass
+
+            # Rate limiting: pause between batches
+            if i + batch_size < total:
+                time.sleep(2)  # 2 second delay between batches
 
         print(f"Calculated profitability for {len(profitability)} stocks")
         return profitability
@@ -226,35 +250,47 @@ class FactorCalculator:
         Returns:
             Dictionary mapping ticker to asset growth rate
         """
+        import time
         print("Calculating asset growth rates...")
         asset_growth = {}
+        batch_size = 50
+        total = len(self.constituents)
 
-        for ticker in self.constituents:
-            try:
-                ticker_obj = yf.Ticker(ticker)
+        for i in range(0, total, batch_size):
+            batch = self.constituents[i:i+batch_size]
+            print(f"  Processing asset growth batch {i//batch_size + 1}/{(total + batch_size - 1)//batch_size} ({len(batch)} stocks)...")
 
-                # Get balance sheet data
-                balance_sheet = ticker_obj.balance_sheet
+            for ticker in batch:
+                try:
+                    ticker_obj = yf.Ticker(ticker)
 
-                if not balance_sheet.empty and len(balance_sheet.columns) >= 2:
-                    # Get total assets for most recent two periods
-                    total_assets_current = None
-                    total_assets_prev = None
+                    # Get balance sheet data
+                    balance_sheet = ticker_obj.balance_sheet
 
-                    # Try different possible names for Total Assets
-                    for asset_name in ['Total Assets', 'TotalAssets']:
-                        if asset_name in balance_sheet.index:
-                            total_assets_current = balance_sheet.loc[asset_name].iloc[0]
-                            total_assets_prev = balance_sheet.loc[asset_name].iloc[1]
-                            break
+                    if not balance_sheet.empty and len(balance_sheet.columns) >= 2:
+                        # Get total assets for most recent two periods
+                        total_assets_current = None
+                        total_assets_prev = None
 
-                    # Calculate asset growth rate
-                    if (total_assets_current is not None and
-                        total_assets_prev is not None and
-                        total_assets_prev > 0):
-                        asset_growth[ticker] = (total_assets_current / total_assets_prev) - 1
-            except:
-                pass
+                        # Try different possible names for Total Assets
+                        for asset_name in ['Total Assets', 'TotalAssets']:
+                            if asset_name in balance_sheet.index:
+                                total_assets_current = balance_sheet.loc[asset_name].iloc[0]
+                                total_assets_prev = balance_sheet.loc[asset_name].iloc[1]
+                                break
+
+                        # Calculate asset growth rate
+                        if (total_assets_current is not None and
+                            total_assets_prev is not None and
+                            total_assets_prev > 0):
+                            asset_growth[ticker] = (total_assets_current / total_assets_prev) - 1
+                except Exception as e:
+                    # Silently skip errors
+                    pass
+
+            # Rate limiting: pause between batches
+            if i + batch_size < total:
+                time.sleep(2)  # 2 second delay between batches
 
         print(f"Calculated asset growth for {len(asset_growth)} stocks")
         return asset_growth
