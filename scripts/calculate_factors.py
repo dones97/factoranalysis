@@ -218,6 +218,47 @@ class FactorCalculator:
         print(f"Calculated momentum for {len(momentum)} stocks")
         return momentum
 
+    def get_asset_growth(self) -> Dict[str, float]:
+        """
+        Calculate asset growth rate (change in total assets year-over-year).
+        Used for CMA (Conservative Minus Aggressive) factor.
+
+        Returns:
+            Dictionary mapping ticker to asset growth rate
+        """
+        print("Calculating asset growth rates...")
+        asset_growth = {}
+
+        for ticker in self.constituents:
+            try:
+                ticker_obj = yf.Ticker(ticker)
+
+                # Get balance sheet data
+                balance_sheet = ticker_obj.balance_sheet
+
+                if not balance_sheet.empty and len(balance_sheet.columns) >= 2:
+                    # Get total assets for most recent two periods
+                    total_assets_current = None
+                    total_assets_prev = None
+
+                    # Try different possible names for Total Assets
+                    for asset_name in ['Total Assets', 'TotalAssets']:
+                        if asset_name in balance_sheet.index:
+                            total_assets_current = balance_sheet.loc[asset_name].iloc[0]
+                            total_assets_prev = balance_sheet.loc[asset_name].iloc[1]
+                            break
+
+                    # Calculate asset growth rate
+                    if (total_assets_current is not None and
+                        total_assets_prev is not None and
+                        total_assets_prev > 0):
+                        asset_growth[ticker] = (total_assets_current / total_assets_prev) - 1
+            except:
+                pass
+
+        print(f"Calculated asset growth for {len(asset_growth)} stocks")
+        return asset_growth
+
     def calculate_portfolio_returns(self, stock_list: List[str],
                                    weights: str = 'equal') -> pd.Series:
         """
@@ -399,12 +440,50 @@ class FactorCalculator:
         print(f"WML factor calculated: {len(wml)} periods, mean={wml.mean():.4f}, std={wml.std():.4f}")
         return wml
 
+    def calculate_cma(self) -> pd.Series:
+        """
+        Calculate CMA (Conservative Minus Aggressive) factor.
+        Sorts stocks by asset growth and creates long-short portfolio.
+        Conservative = low asset growth, Aggressive = high asset growth.
+
+        Returns:
+            Series of CMA factor returns
+        """
+        print("\nCalculating CMA factor...")
+
+        asset_growth = self.get_asset_growth()
+
+        if len(asset_growth) < 10:
+            print("Insufficient asset growth data for CMA")
+            return pd.Series(dtype=float)
+
+        # Sort by asset growth
+        sorted_stocks = sorted(asset_growth.items(), key=lambda x: x[1])
+
+        # Conservative (low growth) = bottom 30%, Aggressive (high growth) = top 30%
+        cutoff = int(len(sorted_stocks) * 0.3)
+        conservative_stocks = [s[0] for s in sorted_stocks[:cutoff]]
+        aggressive_stocks = [s[0] for s in sorted_stocks[-cutoff:]]
+
+        print(f"Conservative (low growth) portfolio: {len(conservative_stocks)} stocks")
+        print(f"Aggressive (high growth) portfolio: {len(aggressive_stocks)} stocks")
+
+        # Calculate returns
+        conservative_returns = self.calculate_portfolio_returns(conservative_stocks)
+        aggressive_returns = self.calculate_portfolio_returns(aggressive_stocks)
+
+        # Align indices
+        cma = conservative_returns.subtract(aggressive_returns, fill_value=0)
+
+        print(f"CMA factor calculated: {len(cma)} periods, mean={cma.mean():.4f}, std={cma.std():.4f}")
+        return cma
+
     def calculate_all_factors(self) -> pd.DataFrame:
         """
         Calculate all Fama-French factors and market return.
 
         Returns:
-            DataFrame with columns: Mkt-RF, SMB, HML, RMW, WML
+            DataFrame with columns: Mkt-RF, SMB, HML, RMW, CMA, WML
         """
         print("\n" + "="*60)
         print("CALCULATING FAMA-FRENCH FACTORS")
@@ -429,94 +508,4 @@ class FactorCalculator:
 
         # Calculate each factor
         smb = self.calculate_smb()
-        hml = self.calculate_hml()
-        rmw = self.calculate_rmw()
-        wml = self.calculate_wml()
-
-        # Combine into single DataFrame
-        factors = pd.DataFrame({
-            'Mkt-RF': market_return,
-            'SMB': smb,
-            'HML': hml,
-            'RMW': rmw,
-            'WML': wml
-        })
-
-        # Fill missing values with 0 (for periods where factor couldn't be calculated)
-        factors = factors.fillna(0)
-
-        print("\n" + "="*60)
-        print("FACTOR CALCULATION COMPLETE")
-        print("="*60)
-        print(f"\nTotal periods: {len(factors)}")
-        print(f"Date range: {factors.index[0]} to {factors.index[-1]}")
-        print("\nFactor Statistics (annualized):")
-        print(factors.mean() * 52)
-        print("\nFactor Volatility (annualized):")
-        print(factors.std() * np.sqrt(52))
-
-        return factors
-
-
-def load_nifty_500_constituents(file_path: str = None) -> List[str]:
-    """
-    Load NIFTY 500 constituent tickers from file.
-
-    Args:
-        file_path: Path to CSV file with constituents
-
-    Returns:
-        List of ticker symbols
-    """
-    if file_path and pd.io.common.file_exists(file_path):
-        df = pd.read_csv(file_path)
-        # Assume column is named 'Ticker' or 'Symbol'
-        col = 'Ticker' if 'Ticker' in df.columns else 'Symbol'
-        tickers = df[col].tolist()
-        print(f"Loaded {len(tickers)} constituents from {file_path}")
-        return tickers
-    else:
-        # Fallback: Use a subset of major stocks if constituent file not available
-        print("Constituent file not found. Using default stock list...")
-        return get_default_stock_list()
-
-
-def get_default_stock_list() -> List[str]:
-    """
-    Returns a default list of major Indian stocks as fallback.
-    """
-    # Top 50 NIFTY stocks as a reasonable proxy
-    return [
-        'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
-        'HINDUNILVR.NS', 'BHARTIARTL.NS', 'ITC.NS', 'SBIN.NS', 'LT.NS',
-        'KOTAKBANK.NS', 'BAJFINANCE.NS', 'ASIANPAINT.NS', 'HCLTECH.NS', 'AXISBANK.NS',
-        'MARUTI.NS', 'SUNPHARMA.NS', 'TITAN.NS', 'ULTRACEMCO.NS', 'NESTLEIND.NS',
-        'WIPRO.NS', 'BAJAJFINSV.NS', 'M&M.NS', 'TECHM.NS', 'POWERGRID.NS',
-        'NTPC.NS', 'TATASTEEL.NS', 'ONGC.NS', 'ADANIPORTS.NS', 'INDUSINDBK.NS',
-        'COALINDIA.NS', 'TATAMOTORS.NS', 'DIVISLAB.NS', 'GRASIM.NS', 'CIPLA.NS',
-        'DRREDDY.NS', 'BRITANNIA.NS', 'EICHERMOT.NS', 'JSWSTEEL.NS', 'HINDALCO.NS',
-        'SHREECEM.NS', 'UPL.NS', 'BPCL.NS', 'HEROMOTOCO.NS', 'BAJAJ-AUTO.NS',
-        'APOLLOHOSP.NS', 'ADANIENT.NS', 'SBILIFE.NS', 'HDFCLIFE.NS', 'TATACONSUM.NS'
-    ]
-
-
-if __name__ == "__main__":
-    # Example usage
-    constituents = get_default_stock_list()
-
-    # Calculate factors for last 10 years
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=365*10)
-
-    calculator = FactorCalculator(
-        constituents=constituents,
-        start_date=start_date.strftime('%Y-%m-%d'),
-        end_date=end_date.strftime('%Y-%m-%d')
-    )
-
-    factors = calculator.calculate_all_factors()
-
-    # Save to file
-    output_file = '../data/ff_factors.parquet'
-    factors.to_parquet(output_file)
-    print(f"\nFactors saved to {output_file}")
+        hml = self.cal
