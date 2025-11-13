@@ -9,8 +9,9 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# Add parent directory to path to import calculate_factors
-sys.path.insert(0, str(Path(__file__).parent))
+# Add scripts directory to path to import calculate_factors
+script_dir = Path(__file__).parent.resolve()
+sys.path.insert(0, str(script_dir))
 
 from calculate_factors import FactorCalculator, load_nifty_500_constituents, get_default_stock_list
 import pandas as pd
