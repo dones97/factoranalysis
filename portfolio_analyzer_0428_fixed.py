@@ -122,21 +122,23 @@ def fetch_ff_factors_fallback(start_date, end_date):
             # Calibrated approximation for HML
             hml = pd.Series(np.random.normal(0.0015, 0.025, len(mkt)), index=mkt.index)
 
-        # Try to get alpha/momentum index for RMW and WML
+        # Try to get alpha/momentum index for RMW, CMA, and WML
         try:
             alpha_data = yf.download("ALPHA.NS", start=start_date, end=end_date, progress=False, auto_adjust=False)
             if not alpha_data.empty:
                 alpha = alpha_data['Close'].resample("W-FRI").last().pct_change().dropna()
                 rmw = alpha.subtract(mkt, fill_value=0) * 0.7  # Scale down for RMW
+                cma = alpha.subtract(mkt, fill_value=0) * 0.5  # Scale down for CMA
                 wml = alpha.subtract(mkt, fill_value=0) * 1.2  # Scale up for WML
             else:
                 raise ValueError("No alpha data")
         except:
             # Calibrated approximations
             rmw = pd.Series(np.random.normal(0.001, 0.02, len(mkt)), index=mkt.index)
+            cma = pd.Series(np.random.normal(0.0005, 0.015, len(mkt)), index=mkt.index)
             wml = pd.Series(np.random.normal(0.002, 0.03, len(mkt)), index=mkt.index)
 
-        return pd.DataFrame({"Mkt-RF": mkt, "SMB": smb, "HML": hml, "RMW": rmw, "WML": wml})
+        return pd.DataFrame({"Mkt-RF": mkt, "SMB": smb, "HML": hml, "RMW": rmw, "CMA": cma, "WML": wml})
 
     except Exception as e:
         st.error(f"Error in fallback calculation: {str(e)}")
