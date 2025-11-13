@@ -26,8 +26,9 @@ I've successfully implemented a **long-term solution** for calculating accurate 
    - Designed for GitHub Actions
 
 3. **`data/nifty_500_constituents.csv`** - Stock universe
-   - Currently contains 50 major stocks (NIFTY 50 proxy)
-   - Can be expanded to full NIFTY 500
+   - Currently contains 189 stocks (NIFTY 200 constituents)
+   - Expanded from 50 to reduce overfitting
+   - Can be further expanded to full NIFTY 500
 
 4. **`data/ff_factors.parquet`** - Pre-calculated factors
    - 521 weeks of data (10 years)
@@ -96,14 +97,14 @@ From 10 years of data (2015-2025):
 
 | Factor | Mean Return | Volatility |
 |--------|-------------|------------|
-| Mkt-RF | 13.06%      | 15.59%     |
-| SMB    | -4.10%      | 7.20%      |
-| HML    | -1.34%      | 15.78%     |
-| RMW    | -2.33%      | 13.26%     |
-| CMA    | TBD         | TBD        |
-| WML    | 9.83%       | 11.92%     |
+| Mkt-RF | 13.13%      | 15.60%     |
+| SMB    | -4.12%      | 7.20%      |
+| HML    | -1.38%      | 15.78%     |
+| RMW    | -3.26%      | 13.27%     |
+| CMA    | -7.95%      | 13.52%     |
+| WML    | 9.73%       | 11.92%     |
 
-*Note: CMA statistics will be updated after first calculation run*
+*Note: Statistics based on 521 weeks (10 years) from 2015-11-27 to 2025-11-14*
 
 ## 🚀 Deployment Steps
 
