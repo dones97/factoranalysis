@@ -508,4 +508,96 @@ class FactorCalculator:
 
         # Calculate each factor
         smb = self.calculate_smb()
-        hml = self.cal
+        hml = self.calculate_hml()
+        rmw = self.calculate_rmw()
+        cma = self.calculate_cma()
+        wml = self.calculate_wml()
+
+        # Combine into single DataFrame
+        factors = pd.DataFrame({
+            'Mkt-RF': market_return,
+            'SMB': smb,
+            'HML': hml,
+            'RMW': rmw,
+            'CMA': cma,
+            'WML': wml
+        })
+
+        # Fill missing values with 0 (for periods where factor couldn't be calculated)
+        factors = factors.fillna(0)
+
+        print("\n" + "="*60)
+        print("FACTOR CALCULATION COMPLETE")
+        print("="*60)
+        print(f"\nTotal periods: {len(factors)}")
+        print(f"Date range: {factors.index[0]} to {factors.index[-1]}")
+        print("\nFactor Statistics (annualized):")
+        print(factors.mean() * 52)
+        print("\nFactor Volatility (annualized):")
+        print(factors.std() * np.sqrt(52))
+
+        return factors
+
+
+def load_nifty_500_constituents(file_path: str = None) -> List[str]:
+    """
+    Load NIFTY 500 constituent tickers from file.
+
+    Args:
+        file_path: Path to CSV file with constituents
+
+    Returns:
+        List of ticker symbols
+    """
+    if file_path and pd.io.common.file_exists(file_path):
+        df = pd.read_csv(file_path)
+        # Assume column is named 'Ticker' or 'Symbol'
+        col = 'Ticker' if 'Ticker' in df.columns else 'Symbol'
+        tickers = df[col].tolist()
+        print(f"Loaded {len(tickers)} constituents from {file_path}")
+        return tickers
+    else:
+        # Fallback: Use a subset of major stocks if constituent file not available
+        print("Constituent file not found. Using default stock list...")
+        return get_default_stock_list()
+
+
+def get_default_stock_list() -> List[str]:
+    """
+    Returns a default list of major Indian stocks as fallback.
+    """
+    # Top 50 NIFTY stocks as a reasonable proxy
+    return [
+        'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
+        'HINDUNILVR.NS', 'BHARTIARTL.NS', 'ITC.NS', 'SBIN.NS', 'LT.NS',
+        'KOTAKBANK.NS', 'BAJFINANCE.NS', 'ASIANPAINT.NS', 'HCLTECH.NS', 'AXISBANK.NS',
+        'MARUTI.NS', 'SUNPHARMA.NS', 'TITAN.NS', 'ULTRACEMCO.NS', 'NESTLEIND.NS',
+        'WIPRO.NS', 'BAJAJFINSV.NS', 'M&M.NS', 'TECHM.NS', 'POWERGRID.NS',
+        'NTPC.NS', 'TATASTEEL.NS', 'ONGC.NS', 'ADANIPORTS.NS', 'INDUSINDBK.NS',
+        'COALINDIA.NS', 'TATAMOTORS.NS', 'DIVISLAB.NS', 'GRASIM.NS', 'CIPLA.NS',
+        'DRREDDY.NS', 'BRITANNIA.NS', 'EICHERMOT.NS', 'JSWSTEEL.NS', 'HINDALCO.NS',
+        'SHREECEM.NS', 'UPL.NS', 'BPCL.NS', 'HEROMOTOCO.NS', 'BAJAJ-AUTO.NS',
+        'APOLLOHOSP.NS', 'ADANIENT.NS', 'SBILIFE.NS', 'HDFCLIFE.NS', 'TATACONSUM.NS'
+    ]
+
+
+if __name__ == "__main__":
+    # Example usage
+    constituents = get_default_stock_list()
+
+    # Calculate factors for last 10 years
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=365*10)
+
+    calculator = FactorCalculator(
+        constituents=constituents,
+        start_date=start_date.strftime('%Y-%m-%d'),
+        end_date=end_date.strftime('%Y-%m-%d')
+    )
+
+    factors = calculator.calculate_all_factors()
+
+    # Save to file
+    output_file = '../data/ff_factors.parquet'
+    factors.to_parquet(output_file)
+    print(f"\nFactors saved to {output_file}")
