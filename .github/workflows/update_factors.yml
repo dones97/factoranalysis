@@ -54,6 +54,7 @@ jobs:
         git config --local user.name "github-actions[bot]"
         git add data/ff_factors.parquet data/ff_factors.csv
         git commit -m "Update Fama-French factors - $(date +'%Y-%m-%d')"
+        git pull --rebase origin main
         git push
 
     - name: No changes detected
