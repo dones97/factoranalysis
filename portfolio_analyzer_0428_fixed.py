@@ -13,6 +13,19 @@ import os
 st.set_page_config(layout="wide")
 st.title("Stock & Portfolio Analyzer with Editable Portfolios")
 
+# ---- Factor Name Mapping ----
+FACTOR_NAMES = {
+    'Mkt-RF': 'Market Risk Premium',
+    'SMB': 'Size Factor (Small Minus Big)',
+    'HML': 'Value Factor (High Minus Low B/M)',
+    'RMW': 'Profitability Factor (Robust Minus Weak)',
+    'CMA': 'Investment Factor (Conservative Minus Aggressive)',
+    'WML': 'Momentum Factor (Winners Minus Losers)',
+    'RGR': 'Growth Factor (Revenue Growth Rate)',
+    'QMJ': 'Quality Factor (Quality Minus Junk)',
+    'LIQ': 'Liquidity Factor (Illiquid Minus Liquid)'
+}
+
 # ---- Industry to Sector Mapping for BSE Stocks ----
 INDUSTRY_TO_SECTOR = {
     "Banks": "Financial Services",
@@ -473,12 +486,21 @@ with tabs[0]:
             
             st.subheader("Factor Betas")
             dfb = pd.DataFrame({"Beta": met["Betas"].round(4), "P-Value": met["Model"].pvalues.round(4)})
+            # Add intuitive factor names
+            dfb['Factor Name'] = dfb.index.map(lambda x: FACTOR_NAMES.get(x, x))
+            # Reorder columns to show Factor Name first
+            dfb = dfb[['Factor Name', 'Beta', 'P-Value']]
             st.dataframe(dfb, use_container_width=True, key="sa_betas")
             st.subheader("Annual Excess Return Contributions")
             contrib = {fac: met["Betas"].get(fac, 0) * ff[fac].mean() * 52 for fac in ff.columns}
             contrib["Alpha"] = met["Betas"].get("const", 0) * 52
-            dfc = pd.DataFrame({"Factor": list(contrib.keys()), "Contribution (%)": [v*100 for v in contrib.values()]}).round(2)
-            st.plotly_chart(px.bar(dfc, x="Factor", y="Contribution (%)",
+            # Add intuitive factor names for the chart
+            dfc = pd.DataFrame({
+                "Factor": list(contrib.keys()),
+                "Contribution (%)": [v*100 for v in contrib.values()],
+                "Factor Name": [FACTOR_NAMES.get(f, f) if f != "Alpha" else "Alpha (Unexplained)" for f in contrib.keys()]
+            }).round(2)
+            st.plotly_chart(px.bar(dfc, x="Factor Name", y="Contribution (%)",
                                   text=dfc["Contribution (%)"].astype(str) + "%",
                                   title="Annual Excess Return Contributions"),
                             use_container_width=True, key="sa_contrib")
@@ -922,9 +944,12 @@ with tabs[1]:
             st.subheader("Portfolio Betas (Regression)")
             dfb2 = pd.DataFrame({
                 "Factor": base_rmet["Betas"].index,
+                "Factor Name": [FACTOR_NAMES.get(f, f) if f != "const" else "Alpha (Intercept)" for f in base_rmet["Betas"].index],
                 "Beta": base_rmet["Betas"].values,
                 "P-Value": base_rmet["Model"].pvalues.values
             }).round(4)
+            # Reorder to show Factor Name first
+            dfb2 = dfb2[["Factor Name", "Factor", "Beta", "P-Value"]]
             st.dataframe(dfb2, use_container_width=True, key="port_betas")
     else:
         st.info("Upload Holdings Excel to begin. NSE/BSE mapping files are loaded from the repo.")
