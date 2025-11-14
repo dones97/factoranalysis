@@ -19,7 +19,7 @@ class FactorCalculator:
     Calculates Fama-French style factors from stock data.
     """
 
-    def __init__(self, constituents: List[str], start_date: str, end_date: str):
+    def __init__(self, constituents: List[str], start_date: str, end_date: str, filter_by_data_availability: bool = True):
         """
         Initialize the factor calculator.
 
@@ -27,12 +27,123 @@ class FactorCalculator:
             constituents: List of ticker symbols (e.g., ['RELIANCE.NS', 'TCS.NS'])
             start_date: Start date in 'YYYY-MM-DD' format
             end_date: End date in 'YYYY-MM-DD' format
+            filter_by_data_availability: If True, pre-filter stocks to only those with fundamental data
         """
-        self.constituents = constituents
         self.start_date = pd.to_datetime(start_date)
         self.end_date = pd.to_datetime(end_date)
         self.prices = None
         self.fundamentals = {}
+
+        # Filter constituents by data availability if requested
+        if filter_by_data_availability and len(constituents) > 200:
+            print(f"\n{'='*60}")
+            print(f"PRE-FILTERING STOCKS FOR DATA AVAILABILITY")
+            print(f"{'='*60}")
+            print(f"Initial stock count: {len(constituents)}")
+            self.constituents = self.filter_stocks_with_fundamentals(constituents)
+            print(f"Filtered stock count: {len(self.constituents)}")
+            print(f"{'='*60}\n")
+        else:
+            self.constituents = constituents
+
+    def filter_stocks_with_fundamentals(self, tickers: List[str], sample_size: int = 100, batch_size: int = 20) -> List[str]:
+        """
+        Pre-filter stocks to identify which ones have fundamental data available.
+        Tests a sample first, then applies filtering based on success rate.
+
+        Args:
+            tickers: List of ticker symbols to filter
+            sample_size: Number of stocks to test initially
+            batch_size: Batch size for testing
+
+        Returns:
+            List of tickers that have fundamental data available
+        """
+        import time
+
+        print(f"Testing data availability for up to {sample_size} stocks...")
+        valid_stocks = []
+        test_count = min(sample_size, len(tickers))
+
+        for i in range(0, test_count, batch_size):
+            batch = tickers[i:i+batch_size]
+            print(f"  Testing batch {i//batch_size + 1}/{(test_count-1)//batch_size + 1} ({len(batch)} stocks)...")
+
+            for ticker in batch:
+                try:
+                    ticker_obj = yf.Ticker(ticker)
+                    info = ticker_obj.info
+
+                    # Check if stock has the fundamental data we need
+                    has_book_value = info.get('bookValue', 0) > 0
+                    has_price = info.get('currentPrice', info.get('regularMarketPrice', 0)) > 0
+
+                    # Try to get financial data
+                    has_financials = False
+                    try:
+                        financials = ticker_obj.financials
+                        has_financials = not financials.empty
+                    except:
+                        pass
+
+                    # If stock has at least book value and price, it's usable
+                    if has_book_value and has_price:
+                        valid_stocks.append(ticker)
+                except Exception as e:
+                    # Skip stocks that error out
+                    pass
+
+            # Small delay between batches
+            if i + batch_size < test_count:
+                time.sleep(1)
+
+        success_rate = len(valid_stocks) / test_count if test_count > 0 else 0
+        print(f"\nData availability test results:")
+        print(f"  Tested: {test_count} stocks")
+        print(f"  Valid: {len(valid_stocks)} stocks")
+        print(f"  Success rate: {success_rate*100:.1f}%")
+
+        # If success rate is very low (<5%), return the valid stocks we found
+        # If success rate is decent (>5%), we can expand to all stocks
+        if success_rate < 0.05:
+            print(f"\n  WARNING: Low success rate ({success_rate*100:.1f}%)")
+            print(f"  Using only the {len(valid_stocks)} stocks with confirmed data")
+            return valid_stocks
+        elif success_rate > 0.20:
+            print(f"\n  Good success rate! Testing all {len(tickers)} stocks...")
+            # Test all stocks since we have good coverage
+            return self._test_all_stocks(tickers, batch_size)
+        else:
+            # Moderate success - use the tested ones
+            print(f"\n  Moderate success rate. Using {len(valid_stocks)} validated stocks.")
+            return valid_stocks
+
+    def _test_all_stocks(self, tickers: List[str], batch_size: int = 20) -> List[str]:
+        """Helper method to test all stocks when success rate is good."""
+        import time
+
+        valid_stocks = []
+        total = len(tickers)
+
+        for i in range(0, total, batch_size):
+            batch = tickers[i:i+batch_size]
+            if i % (batch_size * 10) == 0:  # Progress every 10 batches
+                print(f"  Tested {i}/{total} stocks... ({len(valid_stocks)} valid so far)")
+
+            for ticker in batch:
+                try:
+                    info = yf.Ticker(ticker).info
+                    if (info.get('bookValue', 0) > 0 and
+                        info.get('currentPrice', info.get('regularMarketPrice', 0)) > 0):
+                        valid_stocks.append(ticker)
+                except:
+                    pass
+
+            if i + batch_size < total:
+                time.sleep(1)
+
+        print(f"  Final: {len(valid_stocks)}/{total} stocks have fundamental data")
+        return valid_stocks
 
     def download_price_data(self, batch_size: int = 50, delay: float = 1.0) -> pd.DataFrame:
         """
@@ -514,15 +625,266 @@ class FactorCalculator:
         print(f"CMA factor calculated: {len(cma)} periods, mean={cma.mean():.4f}, std={cma.std():.4f}")
         return cma
 
+    def get_revenue_growth(self) -> Dict[str, float]:
+        """
+        Get revenue growth rates from yfinance .info property.
+        Used for RGR (Revenue Growth Rate) factor.
+
+        Returns:
+            Dictionary mapping ticker to revenue growth rate
+        """
+        print("Fetching revenue growth data...")
+        revenue_growth = {}
+
+        for ticker in self.constituents:
+            try:
+                info = yf.Ticker(ticker).info
+                growth = info.get('revenueGrowth')
+
+                if growth is not None and not np.isnan(growth):
+                    revenue_growth[ticker] = growth
+            except Exception as e:
+                # Silently skip errors
+                pass
+
+        print(f"Retrieved revenue growth for {len(revenue_growth)} stocks")
+        return revenue_growth
+
+    def calculate_rgr(self) -> pd.Series:
+        """
+        Calculate RGR (Revenue Growth Rate) factor.
+        High revenue growth - Low revenue growth.
+
+        Returns:
+            Series of RGR factor returns
+        """
+        print("\nCalculating RGR factor...")
+        revenue_growth = self.get_revenue_growth()
+
+        if len(revenue_growth) < 10:
+            print("Insufficient revenue growth data for RGR")
+            return pd.Series(dtype=float)
+
+        # Sort by revenue growth
+        sorted_stocks = sorted(revenue_growth.items(), key=lambda x: x[1])
+
+        # High growth = top 30%, Low growth = bottom 30%
+        cutoff = int(len(sorted_stocks) * 0.3)
+        low_growth_stocks = [s[0] for s in sorted_stocks[:cutoff]]
+        high_growth_stocks = [s[0] for s in sorted_stocks[-cutoff:]]
+
+        print(f"Low growth portfolio: {len(low_growth_stocks)} stocks")
+        print(f"High growth portfolio: {len(high_growth_stocks)} stocks")
+
+        # Calculate returns
+        low_growth_returns = self.calculate_portfolio_returns(low_growth_stocks)
+        high_growth_returns = self.calculate_portfolio_returns(high_growth_stocks)
+
+        # RGR = High growth - Low growth
+        rgr = high_growth_returns.subtract(low_growth_returns, fill_value=0)
+
+        print(f"RGR factor calculated: {len(rgr)} periods, mean={rgr.mean():.4f}, std={rgr.std():.4f}")
+        return rgr
+
+    def get_quality_scores(self) -> Dict[str, float]:
+        """
+        Calculate quality scores combining profitability and safety metrics.
+        Modified QMJ that excludes growth (to avoid overlap with RGR).
+
+        Returns:
+            Dictionary mapping ticker to quality score
+        """
+        print("Calculating quality scores (profitability + safety)...")
+        quality_data = []
+
+        for ticker in self.constituents:
+            try:
+                info = yf.Ticker(ticker).info
+
+                # Profitability metrics (60% weight)
+                roe = info.get('returnOnEquity')
+                roa = info.get('returnOnAssets')
+                profit_margin = info.get('profitMargins')
+
+                # Safety metric (40% weight)
+                debt_to_equity = info.get('debtToEquity')
+
+                # Only include if we have at least profitability metrics
+                if roe is not None and roa is not None and profit_margin is not None:
+                    quality_data.append({
+                        'ticker': ticker,
+                        'roe': roe if not np.isnan(roe) else 0,
+                        'roa': roa if not np.isnan(roa) else 0,
+                        'profit_margin': profit_margin if not np.isnan(profit_margin) else 0,
+                        'safety': 1 / (1 + debt_to_equity) if (debt_to_equity is not None and not np.isnan(debt_to_equity)) else 0.5  # Neutral if missing
+                    })
+            except Exception as e:
+                # Silently skip errors
+                pass
+
+        if not quality_data:
+            print("No quality data available")
+            return {}
+
+        # Convert to DataFrame for easier percentile ranking
+        df = pd.DataFrame(quality_data)
+
+        # Calculate percentile ranks for each component (0 to 1 scale)
+        df['roe_rank'] = df['roe'].rank(pct=True)
+        df['roa_rank'] = df['roa'].rank(pct=True)
+        df['profit_margin_rank'] = df['profit_margin'].rank(pct=True)
+        df['safety_rank'] = df['safety'].rank(pct=True)
+
+        # Composite quality score
+        # Profitability: 60% (20% each for ROE, ROA, Profit Margin)
+        # Safety: 40%
+        df['quality_score'] = (
+            0.20 * df['roe_rank'] +
+            0.20 * df['roa_rank'] +
+            0.20 * df['profit_margin_rank'] +
+            0.40 * df['safety_rank']
+        )
+
+        quality_scores = dict(zip(df['ticker'], df['quality_score']))
+        print(f"Calculated quality scores for {len(quality_scores)} stocks")
+        return quality_scores
+
+    def calculate_qmj(self) -> pd.Series:
+        """
+        Calculate QMJ (Quality Minus Junk) factor.
+        Modified version focusing on profitability + safety (excludes growth).
+
+        Returns:
+            Series of QMJ factor returns
+        """
+        print("\nCalculating QMJ factor...")
+        quality_scores = self.get_quality_scores()
+
+        if len(quality_scores) < 10:
+            print("Insufficient quality data for QMJ")
+            return pd.Series(dtype=float)
+
+        # Sort by quality score
+        sorted_stocks = sorted(quality_scores.items(), key=lambda x: x[1])
+
+        # Quality (high score) = top 30%, Junk (low score) = bottom 30%
+        cutoff = int(len(sorted_stocks) * 0.3)
+        junk_stocks = [s[0] for s in sorted_stocks[:cutoff]]
+        quality_stocks = [s[0] for s in sorted_stocks[-cutoff:]]
+
+        print(f"Junk (low quality) portfolio: {len(junk_stocks)} stocks")
+        print(f"Quality (high quality) portfolio: {len(quality_stocks)} stocks")
+
+        # Calculate returns
+        junk_returns = self.calculate_portfolio_returns(junk_stocks)
+        quality_returns = self.calculate_portfolio_returns(quality_stocks)
+
+        # QMJ = Quality - Junk
+        qmj = quality_returns.subtract(junk_returns, fill_value=0)
+
+        print(f"QMJ factor calculated: {len(qmj)} periods, mean={qmj.mean():.4f}, std={qmj.std():.4f}")
+        return qmj
+
+    def get_liquidity_scores(self) -> Dict[str, float]:
+        """
+        Calculate Amihud illiquidity measure for each stock.
+        Illiquidity = Average(|Return| / Dollar Volume) over rolling window.
+
+        Returns:
+            Dictionary mapping ticker to illiquidity score (higher = less liquid)
+        """
+        print("Calculating liquidity scores (Amihud measure)...")
+        liquidity_scores = {}
+
+        if self.prices is None:
+            print("Price data not available for liquidity calculation")
+            return {}
+
+        for ticker in self.constituents:
+            if ticker not in self.prices.columns:
+                continue
+
+            try:
+                # Get price and volume data
+                ticker_prices = self.prices[ticker]
+
+                # Calculate returns
+                returns = ticker_prices.pct_change().dropna()
+
+                # Get volume (assuming it's in the DataFrame - we'll need to handle this)
+                # For now, we'll use a simplified turnover approach with market cap
+                info = yf.Ticker(ticker).info
+                market_cap = info.get('marketCap', 0)
+                avg_volume = info.get('averageVolume', 0)
+
+                if market_cap > 0 and avg_volume > 0:
+                    # Calculate average price for dollar volume
+                    avg_price = ticker_prices.tail(60).mean()
+
+                    # Simplified Amihud measure
+                    # (In practice, we'd use daily |return| / dollar_volume)
+                    # Here we use inverse turnover as a proxy
+                    avg_dollar_volume = avg_volume * avg_price
+                    turnover = avg_dollar_volume / market_cap if market_cap > 0 else 0
+
+                    # Illiquidity = 1 / turnover (higher = less liquid)
+                    if turnover > 0:
+                        liquidity_scores[ticker] = 1 / turnover
+                    else:
+                        liquidity_scores[ticker] = 999999  # Very illiquid
+
+            except Exception as e:
+                # Silently skip errors
+                pass
+
+        print(f"Calculated liquidity scores for {len(liquidity_scores)} stocks")
+        return liquidity_scores
+
+    def calculate_liq(self) -> pd.Series:
+        """
+        Calculate LIQ (Liquidity) factor.
+        Illiquid (low liquidity) - Liquid (high liquidity).
+
+        Returns:
+            Series of LIQ factor returns
+        """
+        print("\nCalculating LIQ factor...")
+        liquidity_scores = self.get_liquidity_scores()
+
+        if len(liquidity_scores) < 10:
+            print("Insufficient liquidity data for LIQ")
+            return pd.Series(dtype=float)
+
+        # Sort by illiquidity score (higher = less liquid)
+        sorted_stocks = sorted(liquidity_scores.items(), key=lambda x: x[1])
+
+        # Liquid (low illiquidity) = bottom 30%, Illiquid (high illiquidity) = top 30%
+        cutoff = int(len(sorted_stocks) * 0.3)
+        liquid_stocks = [s[0] for s in sorted_stocks[:cutoff]]
+        illiquid_stocks = [s[0] for s in sorted_stocks[-cutoff:]]
+
+        print(f"Liquid (low illiquidity) portfolio: {len(liquid_stocks)} stocks")
+        print(f"Illiquid (high illiquidity) portfolio: {len(illiquid_stocks)} stocks")
+
+        # Calculate returns
+        liquid_returns = self.calculate_portfolio_returns(liquid_stocks)
+        illiquid_returns = self.calculate_portfolio_returns(illiquid_stocks)
+
+        # LIQ = Illiquid - Liquid (expect positive if illiquidity earns premium)
+        liq = illiquid_returns.subtract(liquid_returns, fill_value=0)
+
+        print(f"LIQ factor calculated: {len(liq)} periods, mean={liq.mean():.4f}, std={liq.std():.4f}")
+        return liq
+
     def calculate_all_factors(self) -> pd.DataFrame:
         """
         Calculate all Fama-French factors and market return.
 
         Returns:
-            DataFrame with columns: Mkt-RF, SMB, HML, RMW, CMA, WML
+            DataFrame with columns: Mkt-RF, SMB, HML, RMW, CMA, WML, RGR, QMJ, LIQ
         """
         print("\n" + "="*60)
-        print("CALCULATING FAMA-FRENCH FACTORS")
+        print("CALCULATING FAMA-FRENCH FACTORS (9-FACTOR MODEL)")
         print("="*60)
 
         # Download price data first
@@ -542,12 +904,17 @@ class FactorCalculator:
         market_return = market_close.resample('W-FRI').last().pct_change().dropna()
         print(f"Market return calculated: {len(market_return)} periods")
 
-        # Calculate each factor
+        # Calculate original 6 factors
         smb = self.calculate_smb()
         hml = self.calculate_hml()
         rmw = self.calculate_rmw()
         cma = self.calculate_cma()
         wml = self.calculate_wml()
+
+        # Calculate new 3 factors
+        rgr = self.calculate_rgr()
+        qmj = self.calculate_qmj()
+        liq = self.calculate_liq()
 
         # Combine into single DataFrame
         factors = pd.DataFrame({
@@ -556,7 +923,10 @@ class FactorCalculator:
             'HML': hml,
             'RMW': rmw,
             'CMA': cma,
-            'WML': wml
+            'WML': wml,
+            'RGR': rgr,
+            'QMJ': qmj,
+            'LIQ': liq
         })
 
         # Fill missing values with 0 (for periods where factor couldn't be calculated)
