@@ -6,7 +6,6 @@ import statsmodels.api as sm
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-from pandas_datareader.data import DataReader
 import io
 import os
 
@@ -61,12 +60,8 @@ INDUSTRY_TO_SECTOR = {
 # ---- Utilities ----
 @st.cache_data(ttl=24*3600)
 def get_risk_free_rate_series(start_date, end_date, default_rate=6.5):
-    try:
-        rf = DataReader("INDIRLTLT01STQ", "fred", start_date, end_date) / 100.0
-        return rf.resample("W-FRI").ffill().squeeze()
-    except:
-        idx = pd.date_range(start_date, end_date, freq="W-FRI")
-        return pd.Series(default_rate / 100.0, index=idx)
+    idx = pd.date_range(start_date, end_date, freq="W-FRI")
+    return pd.Series(default_rate / 100.0, index=idx)
 
 @st.cache_data(ttl=24*3600)
 def fetch_ff_factors(start_date, end_date):
@@ -102,6 +97,13 @@ def fetch_ff_factors(start_date, end_date):
     st.sidebar.warning("⚠️ Using fallback calculation (pre-calculated data not found)")
     return fetch_ff_factors_fallback(start_date, end_date)
 
+def _get_close(df):
+    """Extract Close column as a Series, handling MultiIndex columns from newer yfinance."""
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = ["_".join(str(c) for c in col) for col in df.columns]
+    cols = [c for c in df.columns if c.lower().startswith("close")]
+    return df[cols[0]] if cols else df.iloc[:, 0]
+
 def fetch_ff_factors_fallback(start_date, end_date):
     """
     Fallback method: Calculate factors from available market indices.
@@ -112,12 +114,12 @@ def fetch_ff_factors_fallback(start_date, end_date):
         mkt_data = yf.download("^NSEI", start=start_date, end=end_date, progress=False, auto_adjust=False)
         if mkt_data.empty:
             return None
-        mkt = mkt_data['Close'].resample("W-FRI").last().pct_change().dropna()
+        mkt = _get_close(mkt_data).resample("W-FRI").last().pct_change().dropna()
 
         # Get midcap index for SMB calculation
         try:
             midcap_data = yf.download("^NSEMDCP50", start=start_date, end=end_date, progress=False, auto_adjust=False)
-            midcap = midcap_data['Close'].resample("W-FRI").last().pct_change().dropna()
+            midcap = _get_close(midcap_data).resample("W-FRI").last().pct_change().dropna()
             smb = midcap.subtract(mkt, fill_value=0)
         except:
             # If midcap data unavailable, use calibrated random with market correlation
@@ -127,7 +129,7 @@ def fetch_ff_factors_fallback(start_date, end_date):
         try:
             value_data = yf.download("NV20.NS", start=start_date, end=end_date, progress=False, auto_adjust=False)
             if not value_data.empty:
-                value = value_data['Close'].resample("W-FRI").last().pct_change().dropna()
+                value = _get_close(value_data).resample("W-FRI").last().pct_change().dropna()
                 hml = value.subtract(mkt, fill_value=0)
             else:
                 raise ValueError("No value data")
@@ -139,7 +141,7 @@ def fetch_ff_factors_fallback(start_date, end_date):
         try:
             alpha_data = yf.download("ALPHA.NS", start=start_date, end=end_date, progress=False, auto_adjust=False)
             if not alpha_data.empty:
-                alpha = alpha_data['Close'].resample("W-FRI").last().pct_change().dropna()
+                alpha = _get_close(alpha_data).resample("W-FRI").last().pct_change().dropna()
                 rmw = alpha.subtract(mkt, fill_value=0) * 0.7  # Scale down for RMW
                 cma = alpha.subtract(mkt, fill_value=0) * 0.5  # Scale down for CMA
                 wml = alpha.subtract(mkt, fill_value=0) * 1.2  # Scale up for WML
