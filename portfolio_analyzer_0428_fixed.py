@@ -506,6 +506,16 @@ with tabs[0]:
                                   text=dfc["Contribution (%)"].astype(str) + "%",
                                   title="Annual Excess Return Contributions"),
                             use_container_width=True, key="sa_contrib")
+
+            # --- Factor Returns & Volatility Table (same for all stocks) ---
+            st.subheader("Factor Returns & Volatility")
+            factor_stats = pd.DataFrame({
+                "Factor": ff.columns,
+                "Factor Name": [FACTOR_NAMES.get(f, f) for f in ff.columns],
+                "Annualized Mean Return (%)": (ff.mean() * 52 * 100).round(2).values,
+                "Annualized Std Dev (%)": (ff.std() * np.sqrt(52) * 100).round(2).values,
+            })
+            st.dataframe(factor_stats, use_container_width=True, hide_index=True, key="sa_factor_stats")
         else:
             st.error("Insufficient data for regression.")
     else:
