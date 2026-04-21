@@ -8,8 +8,8 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import io
 import os
-
-st.set_page_config(layout="wide")
+import requests
+import urllib.parsest.set_page_config(layout="wide")
 st.title("Stock & Portfolio Analyzer with Editable Portfolios")
 
 # ---- Factor Name Mapping ----
@@ -543,28 +543,88 @@ with tabs[1]:
         help="Download an example template to use for your Holdings upload"
     )
 
-    hold = st.file_uploader("Holdings (Excel)", type=['xls', 'xlsx'], key="pa_hold")
+    c1, c2 = st.columns(2)
+    with c1:
+        hold = st.file_uploader("Option 1: Holdings (Excel)", type=['xls', 'xlsx'], key="pa_hold")
+
+    with c2:
+        st.write("Option 2: Fetch via Upstox API")
+        upstox_api_key = st.secrets.get("UPSTOX_API_KEY", "") if hasattr(st, "secrets") else ""
+        upstox_api_secret = st.secrets.get("UPSTOX_API_SECRET", "") if hasattr(st, "secrets") else ""
+        upstox_redirect = st.secrets.get("UPSTOX_REDIRECT_URI", "") if hasattr(st, "secrets") else ""
+        
+        if "upstox_api_data" not in st.session_state:
+            st.session_state["upstox_api_data"] = None
+
+        if not upstox_api_key or not upstox_api_secret:
+            st.info("Set UPSTOX_API_KEY and UPSTOX_API_SECRET in st.secrets or .env to enable API fetch.")
+        else:
+            auth_url = f"https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id={upstox_api_key}&redirect_uri={urllib.parse.quote(upstox_redirect)}"
+            st.markdown(f"[🔗 Login to Upstox (Get Code)]({auth_url})", unsafe_allow_html=True)
+            auth_code = st.text_input("Paste the generated 'code' here:")
+            if st.button("Fetch Holdings"):
+                if not auth_code:
+                    st.error("Please enter the authorization code.")
+                else:
+                    with st.spinner("Fetching token and holdings..."):
+                        try:
+                            # 1. Fetch access token
+                            token_url = "https://api.upstox.com/v2/login/authorization/token"
+                            payload = {
+                                "code": auth_code,
+                                "client_id": upstox_api_key,
+                                "client_secret": upstox_api_secret,
+                                "redirect_uri": upstox_redirect,
+                                "grant_type": "authorization_code"
+                            }
+                            headers = {"accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"}
+                            res = requests.post(token_url, data=payload, headers=headers)
+                            res.raise_for_status()
+                            access_token = res.json().get("access_token")
+                            
+                            # 2. Fetch holdings
+                            holdings_url = "https://api.upstox.com/v2/portfolio/long-term-holdings"
+                            h_headers = {"accept": "application/json", "Authorization": f"Bearer {access_token}"}
+                            h_res = requests.get(holdings_url, headers=h_headers)
+                            h_res.raise_for_status()
+                            h_data = h_res.json()
+                            if h_data.get("status") == "success":
+                                upstox_raw = h_data.get("data", [])
+                                upstox_records = [{"ISIN": str(item.get("isin")), "Current Qty": item.get("quantity")} for item in upstox_raw if item.get("quantity", 0) > 0]
+                                st.session_state["upstox_api_data"] = pd.DataFrame(upstox_records)
+                                st.success("Holdings fetched successfully!")
+                            else:
+                                st.error("Failed to extract holdings data from response.")
+                        except Exception as e:
+                            st.error(f"Upstox API Error: {str(e)}")
 
     # Use mapping files from the repo
     nse_path = "data/nse_map.csv"
     bse_path = "data/bse_map.csv"
 
-    if hold:
-        try:
-            # Validate file extensions
-            if hold is not None and not hold.name.lower().endswith((".xls", ".xlsx")):
-                st.error("Holdings file must be an Excel file (.xls or .xlsx)")
-                st.stop()
+    upstox_data = st.session_state.get("upstox_api_data", None)
 
-            # Try to read the files
-            dfh = pd.read_excel(hold)
+    if hold is not None or upstox_data is not None:
+        try:
+            source_name = "upstox_api"
+            if hold is not None:
+                source_name = hold.name
+                # Validate file extensions
+                if not hold.name.lower().endswith((".xls", ".xlsx")):
+                    st.error("Holdings file must be an Excel file (.xls or .xlsx)")
+                    st.stop()
+                # Try to read the files
+                dfh = pd.read_excel(hold)
+            else:
+                dfh = upstox_data
+
             dfn = pd.read_csv(nse_path)
             dfb = pd.read_csv(bse_path)
 
             # Validate file contents
             required_columns = ["ISIN", "Current Qty"]
             if not all(col in dfh.columns for col in required_columns):
-                st.error(f"Holdings file must contain columns: {', '.join(required_columns)}")
+                st.error(f"Holdings data must contain columns: {', '.join(required_columns)}")
                 st.stop()
 
             if "ISIN" not in dfn.columns or "Ticker" not in dfn.columns:
@@ -575,10 +635,10 @@ with tabs[1]:
                 st.error("BSE Map file must contain ISIN and Ticker columns")
                 st.stop()
         except Exception as e:
-            st.error(f"Error reading files: {str(e)}")
+            st.error(f"Error reading data: {str(e)}")
             st.stop()
 
-        if "base_df" not in st.session_state or st.session_state["base_src"] != hold.name:
+        if "base_df" not in st.session_state or st.session_state.get("base_src") != source_name:
             try:
                 dfn["Ticker"] = dfn["Ticker"].astype(str).str.strip().str.upper()
                 dfn["DisplayTicker"] = dfn["Ticker"]
@@ -601,7 +661,7 @@ with tabs[1]:
                     columns={"Current Qty":"Quantity"}
                 )
                 st.session_state["changes_df"] = pd.DataFrame(columns=["Action","Ticker","Quantity"])
-                st.session_state["base_src"] = hold.name
+                st.session_state["base_src"] = source_name
             except Exception as e:
                 st.error(f"Error processing files: {str(e)}")
                 st.stop()
