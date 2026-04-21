@@ -9,7 +9,8 @@ from datetime import datetime, timedelta
 import io
 import os
 import requests
-import urllib.parsest.set_page_config(layout="wide")
+import urllib.parse
+st.set_page_config(layout="wide")
 st.title("Stock & Portfolio Analyzer with Editable Portfolios")
 
 # ---- Factor Name Mapping ----
