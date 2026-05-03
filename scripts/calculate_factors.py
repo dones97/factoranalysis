@@ -11,6 +11,9 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 import time
 import warnings
+import sqlite3
+import requests
+import os
 warnings.filterwarnings('ignore')
 
 
@@ -33,6 +36,9 @@ class FactorCalculator:
         self.end_date = pd.to_datetime(end_date)
         self.prices = None
         self.fundamentals = {}
+        
+        self.db_path = os.path.join("data", "screener_data.db")
+        self._download_screener_db()
 
         # Filter constituents by data availability if requested
         if filter_by_data_availability and len(constituents) > 200:
@@ -45,6 +51,27 @@ class FactorCalculator:
             print(f"{'='*60}\n")
         else:
             self.constituents = constituents
+
+    def _download_screener_db(self):
+        """Downloads the latest screener.in database from the valuation repository."""
+        os.makedirs("data", exist_ok=True)
+        print("Downloading latest screener.in database from GitHub...")
+        url = "https://raw.githubusercontent.com/dones97/valuation/main/screener_data.db"
+        try:
+            response = requests.get(url, stream=True)
+            if response.status_code == 200:
+                with open(self.db_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                print(f"Successfully downloaded database to {self.db_path}")
+            else:
+                print(f"Failed to download database. Status code: {response.status_code}")
+        except Exception as e:
+            print(f"Error downloading database: {e}")
+
+    def _strip_ticker(self, ticker: str) -> str:
+        """Strips the .NS or .BO suffix to match screener.in format."""
+        return ticker.replace(".NS", "").replace(".BO", "")
 
     def filter_stocks_with_fundamentals(self, tickers: List[str], sample_size: int = 100, batch_size: int = 20) -> List[str]:
         """
@@ -218,17 +245,32 @@ class FactorCalculator:
         Returns:
             Dictionary mapping ticker to market cap
         """
-        print("Fetching market capitalization data...")
+        print("Fetching market capitalization data from Screener DB...")
         market_caps = {}
 
-        for ticker in self.constituents:
-            try:
-                info = yf.Ticker(ticker).info
-                mc = info.get('marketCap', None)
-                if mc and mc > 0:
-                    market_caps[ticker] = mc
-            except:
-                pass
+        try:
+            conn = sqlite3.connect(self.db_path)
+            for ticker in self.constituents:
+                clean_ticker = self._strip_ticker(ticker)
+                try:
+                    df = pd.read_sql_query("SELECT market_cap FROM key_metrics WHERE ticker=?", conn, params=(clean_ticker,))
+                    if not df.empty and not pd.isna(df['market_cap'].iloc[0]):
+                        # Screener data is in Crores, convert to absolute
+                        market_caps[ticker] = float(df['market_cap'].iloc[0]) * 10000000
+                    else:
+                        raise ValueError("Not in DB")
+                except:
+                    # Fallback to yfinance
+                    try:
+                        info = yf.Ticker(ticker).info
+                        mc = info.get('marketCap', None)
+                        if mc and mc > 0:
+                            market_caps[ticker] = mc
+                    except:
+                        pass
+            conn.close()
+        except Exception as e:
+            print(f"Database error: {e}")
 
         print(f"Retrieved market caps for {len(market_caps)} stocks")
         return market_caps
@@ -243,28 +285,33 @@ class FactorCalculator:
         import time
         print("Calculating book-to-market ratios...")
         bm_ratios = {}
-        batch_size = 50
-        total = len(self.constituents)
 
-        for i in range(0, total, batch_size):
-            batch = self.constituents[i:i+batch_size]
-            print(f"  Processing B/M batch {i//batch_size + 1}/{(total + batch_size - 1)//batch_size} ({len(batch)} stocks)...")
-
-            for ticker in batch:
+        try:
+            conn = sqlite3.connect(self.db_path)
+            for ticker in self.constituents:
+                clean_ticker = self._strip_ticker(ticker)
                 try:
-                    info = yf.Ticker(ticker).info
-                    book_value = info.get('bookValue', 0)
-                    current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
-
-                    if book_value > 0 and current_price > 0:
-                        bm_ratios[ticker] = book_value / current_price
-                except Exception as e:
-                    # Silently skip errors but could log them
-                    pass
-
-            # Rate limiting: pause between batches
-            if i + batch_size < total:
-                time.sleep(2)  # 2 second delay between batches
+                    df = pd.read_sql_query("SELECT book_value, current_price FROM key_metrics WHERE ticker=?", conn, params=(clean_ticker,))
+                    if not df.empty and not pd.isna(df['book_value'].iloc[0]) and not pd.isna(df['current_price'].iloc[0]):
+                        bv = float(df['book_value'].iloc[0])
+                        cp = float(df['current_price'].iloc[0])
+                        if bv > 0 and cp > 0:
+                            bm_ratios[ticker] = bv / cp
+                    else:
+                        raise ValueError("Not in DB")
+                except:
+                    # Fallback to yfinance
+                    try:
+                        info = yf.Ticker(ticker).info
+                        book_value = info.get('bookValue', 0)
+                        current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+                        if book_value > 0 and current_price > 0:
+                            bm_ratios[ticker] = book_value / current_price
+                    except:
+                        pass
+            conn.close()
+        except Exception as e:
+            print(f"Database error: {e}")
 
         print(f"Calculated B/M ratios for {len(bm_ratios)} stocks")
         return bm_ratios
@@ -280,47 +327,41 @@ class FactorCalculator:
         import time
         print("Calculating profitability metrics (Operating Margin)...")
         profitability = {}
-        batch_size = 50
-        total = len(self.constituents)
 
-        for i in range(0, total, batch_size):
-            batch = self.constituents[i:i+batch_size]
-            print(f"  Processing profitability batch {i//batch_size + 1}/{(total + batch_size - 1)//batch_size} ({len(batch)} stocks)...")
-
-            for ticker in batch:
+        try:
+            conn = sqlite3.connect(self.db_path)
+            for ticker in self.constituents:
+                clean_ticker = self._strip_ticker(ticker)
                 try:
-                    ticker_obj = yf.Ticker(ticker)
-
-                    # Get financial statements
-                    financials = ticker_obj.financials
-
-                    if not financials.empty:
-                        # Get most recent data
-                        op_income = None
-                        revenue = None
-
-                        # Try to get Operating Income
-                        if 'Operating Income' in financials.index:
-                            op_income = financials.loc['Operating Income'].iloc[0]
-                        elif 'EBIT' in financials.index:
-                            op_income = financials.loc['EBIT'].iloc[0]
-
-                        # Try to get Revenue (multiple possible names)
-                        for revenue_name in ['Total Revenue', 'Revenue', 'Operating Revenue']:
-                            if revenue_name in financials.index:
-                                revenue = financials.loc[revenue_name].iloc[0]
-                                break
-
-                        # Calculate operating margin
-                        if revenue is not None and revenue > 0 and op_income is not None:
-                            profitability[ticker] = op_income / revenue
-                except Exception as e:
-                    # Silently skip errors
-                    pass
-
-            # Rate limiting: pause between batches
-            if i + batch_size < total:
-                time.sleep(2)  # 2 second delay between batches
+                    # Get most recent OPM from annual_profit_loss
+                    df = pd.read_sql_query("SELECT opm_percent FROM annual_profit_loss WHERE ticker=? ORDER BY year DESC LIMIT 1", conn, params=(clean_ticker,))
+                    if not df.empty and not pd.isna(df['opm_percent'].iloc[0]):
+                        profitability[ticker] = float(df['opm_percent'].iloc[0]) / 100.0
+                    else:
+                        raise ValueError("Not in DB")
+                except:
+                    # Fallback to yfinance
+                    try:
+                        ticker_obj = yf.Ticker(ticker)
+                        financials = ticker_obj.financials
+                        if not financials.empty:
+                            op_income = None
+                            revenue = None
+                            if 'Operating Income' in financials.index:
+                                op_income = financials.loc['Operating Income'].iloc[0]
+                            elif 'EBIT' in financials.index:
+                                op_income = financials.loc['EBIT'].iloc[0]
+                            for revenue_name in ['Total Revenue', 'Revenue', 'Operating Revenue']:
+                                if revenue_name in financials.index:
+                                    revenue = financials.loc[revenue_name].iloc[0]
+                                    break
+                            if revenue is not None and revenue > 0 and op_income is not None:
+                                profitability[ticker] = op_income / revenue
+                    except:
+                        pass
+            conn.close()
+        except Exception as e:
+            print(f"Database error: {e}")
 
         print(f"Calculated profitability for {len(profitability)} stocks")
         return profitability
@@ -364,44 +405,45 @@ class FactorCalculator:
         import time
         print("Calculating asset growth rates...")
         asset_growth = {}
-        batch_size = 50
-        total = len(self.constituents)
 
-        for i in range(0, total, batch_size):
-            batch = self.constituents[i:i+batch_size]
-            print(f"  Processing asset growth batch {i//batch_size + 1}/{(total + batch_size - 1)//batch_size} ({len(batch)} stocks)...")
-
-            for ticker in batch:
+        try:
+            conn = sqlite3.connect(self.db_path)
+            for ticker in self.constituents:
+                clean_ticker = self._strip_ticker(ticker)
                 try:
-                    ticker_obj = yf.Ticker(ticker)
-
-                    # Get balance sheet data
-                    balance_sheet = ticker_obj.balance_sheet
-
-                    if not balance_sheet.empty and len(balance_sheet.columns) >= 2:
-                        # Get total assets for most recent two periods
-                        total_assets_current = None
-                        total_assets_prev = None
-
-                        # Try different possible names for Total Assets
-                        for asset_name in ['Total Assets', 'TotalAssets']:
-                            if asset_name in balance_sheet.index:
-                                total_assets_current = balance_sheet.loc[asset_name].iloc[0]
-                                total_assets_prev = balance_sheet.loc[asset_name].iloc[1]
-                                break
-
-                        # Calculate asset growth rate
-                        if (total_assets_current is not None and
-                            total_assets_prev is not None and
-                            total_assets_prev > 0):
-                            asset_growth[ticker] = (total_assets_current / total_assets_prev) - 1
-                except Exception as e:
-                    # Silently skip errors
-                    pass
-
-            # Rate limiting: pause between batches
-            if i + batch_size < total:
-                time.sleep(2)  # 2 second delay between batches
+                    df = pd.read_sql_query("SELECT year, total_assets FROM balance_sheet WHERE ticker=?", conn, params=(clean_ticker,))
+                    if not df.empty and len(df) >= 2:
+                        df['date'] = pd.to_datetime(df['year'], format='%b %Y', errors='coerce')
+                        df = df.dropna(subset=['date', 'total_assets']).sort_values('date', ascending=False)
+                        if len(df) >= 2:
+                            total_assets_current = float(df.iloc[0]['total_assets'])
+                            total_assets_prev = float(df.iloc[1]['total_assets'])
+                            if total_assets_prev > 0:
+                                asset_growth[ticker] = (total_assets_current / total_assets_prev) - 1
+                        else:
+                            raise ValueError("Not enough parsed dates")
+                    else:
+                        raise ValueError("Not enough rows in DB")
+                except:
+                    # Fallback to yfinance
+                    try:
+                        ticker_obj = yf.Ticker(ticker)
+                        balance_sheet = ticker_obj.balance_sheet
+                        if not balance_sheet.empty and len(balance_sheet.columns) >= 2:
+                            total_assets_current = None
+                            total_assets_prev = None
+                            for asset_name in ['Total Assets', 'TotalAssets']:
+                                if asset_name in balance_sheet.index:
+                                    total_assets_current = balance_sheet.loc[asset_name].iloc[0]
+                                    total_assets_prev = balance_sheet.loc[asset_name].iloc[1]
+                                    break
+                            if total_assets_current is not None and total_assets_prev is not None and total_assets_prev > 0:
+                                asset_growth[ticker] = (total_assets_current / total_assets_prev) - 1
+                    except:
+                        pass
+            conn.close()
+        except Exception as e:
+            print(f"Database error: {e}")
 
         print(f"Calculated asset growth for {len(asset_growth)} stocks")
         return asset_growth
@@ -627,25 +669,39 @@ class FactorCalculator:
 
     def get_revenue_growth(self) -> Dict[str, float]:
         """
-        Get revenue growth rates from yfinance .info property.
-        Used for RGR (Revenue Growth Rate) factor.
+        Get revenue growth rates from Screener DB.
 
         Returns:
             Dictionary mapping ticker to revenue growth rate
         """
-        print("Fetching revenue growth data...")
+        print("Fetching revenue growth data from Screener DB...")
         revenue_growth = {}
 
-        for ticker in self.constituents:
-            try:
-                info = yf.Ticker(ticker).info
-                growth = info.get('revenueGrowth')
-
-                if growth is not None and not np.isnan(growth):
-                    revenue_growth[ticker] = growth
-            except Exception as e:
-                # Silently skip errors
-                pass
+        try:
+            conn = sqlite3.connect(self.db_path)
+            for ticker in self.constituents:
+                clean_ticker = self._strip_ticker(ticker)
+                try:
+                    df = pd.read_sql_query("SELECT year, sales FROM annual_profit_loss WHERE ticker=? ORDER BY year DESC", conn, params=(clean_ticker,))
+                    if not df.empty and len(df) >= 2:
+                        current_sales = float(df.iloc[0]['sales'])
+                        prev_sales = float(df.iloc[1]['sales'])
+                        if prev_sales > 0:
+                            revenue_growth[ticker] = (current_sales / prev_sales) - 1
+                    else:
+                        raise ValueError("Not in DB or not enough rows")
+                except:
+                    # Fallback to yfinance
+                    try:
+                        info = yf.Ticker(ticker).info
+                        growth = info.get('revenueGrowth')
+                        if growth is not None and not np.isnan(growth):
+                            revenue_growth[ticker] = growth
+                    except:
+                        pass
+            conn.close()
+        except Exception as e:
+            print(f"Database error: {e}")
 
         print(f"Retrieved revenue growth for {len(revenue_growth)} stocks")
         return revenue_growth
@@ -697,30 +753,63 @@ class FactorCalculator:
         print("Calculating quality scores (profitability + safety)...")
         quality_data = []
 
-        for ticker in self.constituents:
-            try:
-                info = yf.Ticker(ticker).info
+        try:
+            conn = sqlite3.connect(self.db_path)
+            for ticker in self.constituents:
+                clean_ticker = self._strip_ticker(ticker)
+                try:
+                    # Get ROE, ROCE from key_metrics
+                    km_df = pd.read_sql_query("SELECT roe_percent, roce_percent FROM key_metrics WHERE ticker=?", conn, params=(clean_ticker,))
+                    # Get debt metrics from balance sheet
+                    bs_df = pd.read_sql_query("SELECT borrowings, equity_capital, reserves FROM balance_sheet WHERE ticker=? ORDER BY year DESC LIMIT 1", conn, params=(clean_ticker,))
+                    
+                    if not km_df.empty and not pd.isna(km_df['roe_percent'].iloc[0]) and not bs_df.empty:
+                        roe = float(km_df['roe_percent'].iloc[0]) / 100.0
+                        roce = float(km_df['roce_percent'].iloc[0]) / 100.0 if not pd.isna(km_df['roce_percent'].iloc[0]) else roe
+                        
+                        borrowings = float(bs_df['borrowings'].iloc[0]) if not pd.isna(bs_df['borrowings'].iloc[0]) else 0
+                        equity = float(bs_df['equity_capital'].iloc[0]) if not pd.isna(bs_df['equity_capital'].iloc[0]) else 0
+                        reserves = float(bs_df['reserves'].iloc[0]) if not pd.isna(bs_df['reserves'].iloc[0]) else 0
+                        
+                        total_equity = equity + reserves
+                        debt_to_equity = borrowings / total_equity if total_equity > 0 else 1.0
+                        
+                        # Profit Margin fallback (just use ROCE again as a proxy if we don't fetch OPM, or fetch OPM)
+                        # We can fetch OPM from annual_profit_loss
+                        pl_df = pd.read_sql_query("SELECT opm_percent FROM annual_profit_loss WHERE ticker=? ORDER BY year DESC LIMIT 1", conn, params=(clean_ticker,))
+                        profit_margin = float(pl_df['opm_percent'].iloc[0]) / 100.0 if not pl_df.empty and not pd.isna(pl_df['opm_percent'].iloc[0]) else roe
 
-                # Profitability metrics (60% weight)
-                roe = info.get('returnOnEquity')
-                roa = info.get('returnOnAssets')
-                profit_margin = info.get('profitMargins')
-
-                # Safety metric (40% weight)
-                debt_to_equity = info.get('debtToEquity')
-
-                # Only include if we have at least profitability metrics
-                if roe is not None and roa is not None and profit_margin is not None:
-                    quality_data.append({
-                        'ticker': ticker,
-                        'roe': roe if not np.isnan(roe) else 0,
-                        'roa': roa if not np.isnan(roa) else 0,
-                        'profit_margin': profit_margin if not np.isnan(profit_margin) else 0,
-                        'safety': 1 / (1 + debt_to_equity) if (debt_to_equity is not None and not np.isnan(debt_to_equity)) else 0.5  # Neutral if missing
-                    })
-            except Exception as e:
-                # Silently skip errors
-                pass
+                        quality_data.append({
+                            'ticker': ticker,
+                            'roe': roe,
+                            'roa': roce, # using ROCE as proxy for ROA here for quality metric
+                            'profit_margin': profit_margin,
+                            'safety': 1 / (1 + debt_to_equity)
+                        })
+                    else:
+                        raise ValueError("Not in DB")
+                except:
+                    # Fallback to yfinance
+                    try:
+                        info = yf.Ticker(ticker).info
+                        roe = info.get('returnOnEquity')
+                        roa = info.get('returnOnAssets')
+                        profit_margin = info.get('profitMargins')
+                        debt_to_equity = info.get('debtToEquity')
+                        
+                        if roe is not None and roa is not None and profit_margin is not None:
+                            quality_data.append({
+                                'ticker': ticker,
+                                'roe': roe if not np.isnan(roe) else 0,
+                                'roa': roa if not np.isnan(roa) else 0,
+                                'profit_margin': profit_margin if not np.isnan(profit_margin) else 0,
+                                'safety': 1 / (1 + debt_to_equity) if (debt_to_equity is not None and not np.isnan(debt_to_equity)) else 0.5
+                            })
+                    except:
+                        pass
+            conn.close()
+        except Exception as e:
+            print(f"Database error: {e}")
 
         if not quality_data:
             print("No quality data available")

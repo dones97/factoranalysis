@@ -558,7 +558,7 @@ with tabs[1]:
             st.session_state["upstox_api_data"] = None
 
         if not upstox_api_key or not upstox_api_secret:
-            st.info("Set UPSTOX_API_KEY and UPSTOX_API_SECRET in st.secrets or .env to enable API fetch.")
+            st.info("Set UPSTOX_API_KEY and UPSTOX_API_SECRET in Streamlit Cloud (App Settings > Secrets) or your local .streamlit/secrets.toml (and **restart** the app).")
         else:
             auth_url = f"https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id={upstox_api_key}&redirect_uri={urllib.parse.quote(upstox_redirect)}"
             st.markdown(f"[🔗 Login to Upstox (Get Code)]({auth_url})", unsafe_allow_html=True)
