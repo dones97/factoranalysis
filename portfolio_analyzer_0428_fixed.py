@@ -549,65 +549,91 @@ with tabs[1]:
         hold = st.file_uploader("Option 1: Holdings (Excel)", type=['xls', 'xlsx'], key="pa_hold")
 
     with c2:
-        st.write("Option 2: Fetch via Upstox API")
-        upstox_api_key = st.secrets.get("UPSTOX_API_KEY", "") if hasattr(st, "secrets") else ""
-        upstox_api_secret = st.secrets.get("UPSTOX_API_SECRET", "") if hasattr(st, "secrets") else ""
-        upstox_redirect = st.secrets.get("UPSTOX_REDIRECT_URI", "") if hasattr(st, "secrets") else ""
-        
-        if "upstox_api_data" not in st.session_state:
-            st.session_state["upstox_api_data"] = None
+        st.write("Option 2: Fetch via Dhan API")
+        dhan_client_id = st.secrets.get("DHAN_CLIENT_ID", "") if hasattr(st, "secrets") else ""
+        dhan_api_key = st.secrets.get("DHAN_API_KEY", "") if hasattr(st, "secrets") else ""
+        dhan_api_secret = st.secrets.get("DHAN_API_SECRET", "") if hasattr(st, "secrets") else ""
 
-        if not upstox_api_key or not upstox_api_secret:
-            st.info("Set UPSTOX_API_KEY and UPSTOX_API_SECRET in Streamlit Cloud (App Settings > Secrets) or your local .streamlit/secrets.toml (and **restart** the app).")
+        if "dhan_api_data" not in st.session_state:
+            st.session_state["dhan_api_data"] = None
+
+        def fetch_dhan_holdings(access_token):
+            # Holdings is a read-only endpoint, so no static IP whitelisting is needed
+            h_res = requests.get(
+                "https://api.dhan.co/v2/holdings",
+                headers={"Content-Type": "application/json", "access-token": access_token},
+            )
+            h_data = h_res.json()
+            # Success returns a list of holdings; errors return a dict with errorCode/errorMessage
+            if isinstance(h_data, list):
+                dhan_records = [{"ISIN": str(item.get("isin")), "Current Qty": item.get("totalQty")} for item in h_data if (item.get("totalQty") or 0) > 0]
+                st.session_state["dhan_api_data"] = pd.DataFrame(dhan_records, columns=["ISIN", "Current Qty"])
+                st.success(f"Holdings fetched successfully! ({len(dhan_records)} positions)")
+            else:
+                st.error(f"Failed to fetch holdings: {h_data.get('errorCode', '')} {h_data.get('errorMessage', h_data)}")
+
+        if not dhan_client_id or not dhan_api_key or not dhan_api_secret:
+            st.info("Set DHAN_CLIENT_ID, DHAN_API_KEY and DHAN_API_SECRET in Streamlit Cloud (App Settings > Secrets) or your local .streamlit/secrets.toml (and **restart** the app), or paste an access token below.")
         else:
-            auth_url = f"https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id={upstox_api_key}&redirect_uri={urllib.parse.quote(upstox_redirect)}"
-            st.markdown(f"[🔗 Login to Upstox (Get Code)]({auth_url})", unsafe_allow_html=True)
-            auth_code = st.text_input("Paste the generated 'code' here:")
+            # Each consent ID counts against Dhan's 25/day limit, so only create one on demand
+            if st.button("Generate Dhan Login Link"):
+                try:
+                    c_res = requests.post(
+                        f"https://auth.dhan.co/app/generate-consent?client_id={dhan_client_id}",
+                        headers={"app_id": dhan_api_key, "app_secret": dhan_api_secret},
+                    )
+                    c_res.raise_for_status()
+                    st.session_state["dhan_consent_id"] = c_res.json().get("consentAppId")
+                except Exception as e:
+                    st.error(f"Dhan API Error: {str(e)}")
+            consent_id = st.session_state.get("dhan_consent_id")
+            if consent_id:
+                auth_url = f"https://auth.dhan.co/login/consentApp-login?consentAppId={consent_id}"
+                st.markdown(f"[🔗 Login to Dhan (Get tokenId)]({auth_url})", unsafe_allow_html=True)
+            token_id = st.text_input("Paste the 'tokenId' (or the full redirect URL) here:")
             if st.button("Fetch Holdings"):
-                if not auth_code:
-                    st.error("Please enter the authorization code.")
+                if not token_id:
+                    st.error("Please enter the tokenId.")
                 else:
+                    if token_id.startswith("http"):
+                        token_id = urllib.parse.parse_qs(urllib.parse.urlparse(token_id).query).get("tokenId", [""])[0]
                     with st.spinner("Fetching token and holdings..."):
                         try:
-                            # 1. Fetch access token
-                            token_url = "https://api.upstox.com/v2/login/authorization/token"
-                            payload = {
-                                "code": auth_code,
-                                "client_id": upstox_api_key,
-                                "client_secret": upstox_api_secret,
-                                "redirect_uri": upstox_redirect,
-                                "grant_type": "authorization_code"
-                            }
-                            headers = {"accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"}
-                            res = requests.post(token_url, data=payload, headers=headers)
+                            # 1. Exchange tokenId for access token
+                            res = requests.get(
+                                f"https://auth.dhan.co/app/consumeApp-consent?tokenId={token_id}",
+                                headers={"app_id": dhan_api_key, "app_secret": dhan_api_secret},
+                            )
                             res.raise_for_status()
-                            access_token = res.json().get("access_token")
-                            
+                            access_token = res.json().get("accessToken")
+                            st.session_state.pop("dhan_consent_id", None)
+
                             # 2. Fetch holdings
-                            holdings_url = "https://api.upstox.com/v2/portfolio/long-term-holdings"
-                            h_headers = {"accept": "application/json", "Authorization": f"Bearer {access_token}"}
-                            h_res = requests.get(holdings_url, headers=h_headers)
-                            h_res.raise_for_status()
-                            h_data = h_res.json()
-                            if h_data.get("status") == "success":
-                                upstox_raw = h_data.get("data", [])
-                                upstox_records = [{"ISIN": str(item.get("isin")), "Current Qty": item.get("quantity")} for item in upstox_raw if item.get("quantity", 0) > 0]
-                                st.session_state["upstox_api_data"] = pd.DataFrame(upstox_records)
-                                st.success("Holdings fetched successfully!")
-                            else:
-                                st.error("Failed to extract holdings data from response.")
+                            fetch_dhan_holdings(access_token)
                         except Exception as e:
-                            st.error(f"Upstox API Error: {str(e)}")
+                            st.error(f"Dhan API Error: {str(e)}")
+
+        with st.expander("Or use an access token from web.dhan.co (valid 24h)"):
+            manual_token = st.text_input("Dhan access token:", type="password", key="dhan_manual_token")
+            if st.button("Fetch Holdings with Token"):
+                if not manual_token:
+                    st.error("Please enter the access token.")
+                else:
+                    with st.spinner("Fetching holdings..."):
+                        try:
+                            fetch_dhan_holdings(manual_token.strip())
+                        except Exception as e:
+                            st.error(f"Dhan API Error: {str(e)}")
 
     # Use mapping files from the repo
     nse_path = "data/nse_map.csv"
     bse_path = "data/bse_map.csv"
 
-    upstox_data = st.session_state.get("upstox_api_data", None)
+    dhan_data = st.session_state.get("dhan_api_data", None)
 
-    if hold is not None or upstox_data is not None:
+    if hold is not None or dhan_data is not None:
         try:
-            source_name = "upstox_api"
+            source_name = "dhan_api"
             if hold is not None:
                 source_name = hold.name
                 # Validate file extensions
@@ -617,7 +643,7 @@ with tabs[1]:
                 # Try to read the files
                 dfh = pd.read_excel(hold)
             else:
-                dfh = upstox_data
+                dfh = dhan_data
 
             dfn = pd.read_csv(nse_path)
             dfb = pd.read_csv(bse_path)
