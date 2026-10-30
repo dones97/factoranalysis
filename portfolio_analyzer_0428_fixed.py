@@ -173,7 +173,18 @@ def fetch_price_df(ticker, start_date, end_date):
     if not cols:
         return None
     df["Close"] = df[cols[0]]
-    return df
+    # yfinance can return a partial row for the current session with no Close
+    df = df.dropna(subset=["Close"])
+    return df if not df.empty else None
+
+def resolve_yf_ticker(symbol):
+    """Find the Yahoo ticker for a bare exchange symbol, preferring NSE over BSE."""
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=30)
+    for suffix in (".NS", ".BO"):
+        if fetch_price_df(symbol + suffix, start_date, end_date) is not None:
+            return symbol + suffix
+    return None
 
 @st.cache_data(ttl=24*3600)
 def weekly_returns(ticker, start_date, end_date):
@@ -290,12 +301,12 @@ def compact_metric_scale(metric_name, lower, value, upper, unit="%", width=370):
     return fig
     
 # ---- Return Contribution by Stock Chart ----
-def plot_return_contributions_by_stock(df, rf_pct, display_map, key):
+def plot_return_contributions_by_stock(df, display_map, key):
     tot = df["MarketValue"].sum()
     dfc = df.copy()
     dfc["DisplayTicker"] = dfc["Ticker"].map(display_map).fillna(dfc["Ticker"])
     dfc["Weight"] = dfc["MarketValue"] / tot
-    dfc["Total_Return"] = (rf_pct / 100 + dfc["Exp_Annual_Rtn"]) * 100
+    dfc["Total_Return"] = dfc["Exp_Annual_Rtn"] * 100
     dfc["Return_Contribution"] = (dfc["Weight"] * dfc["Total_Return"]).round(2)
     fig = px.bar(
         dfc,
@@ -566,8 +577,10 @@ with tabs[1]:
             h_data = h_res.json()
             # Success returns a list of holdings; errors return a dict with errorCode/errorMessage
             if isinstance(h_data, list):
-                dhan_records = [{"ISIN": str(item.get("isin")), "Current Qty": item.get("totalQty")} for item in h_data if (item.get("totalQty") or 0) > 0]
-                st.session_state["dhan_api_data"] = pd.DataFrame(dhan_records, columns=["ISIN", "Current Qty"])
+                dhan_records = [{"ISIN": str(item.get("isin")), "Symbol": item.get("tradingSymbol"), "Current Qty": item.get("totalQty")} for item in h_data if (item.get("totalQty") or 0) > 0]
+                st.session_state["dhan_api_data"] = pd.DataFrame(dhan_records, columns=["ISIN", "Symbol", "Current Qty"])
+                # Rebuild the base portfolio from this fetch, even if one was already loaded
+                st.session_state.pop("base_src", None)
                 st.success(f"Holdings fetched successfully! ({len(dhan_records)} positions)")
             else:
                 st.error(f"Failed to fetch holdings: {h_data.get('errorCode', '')} {h_data.get('errorMessage', h_data)}")
@@ -684,10 +697,23 @@ with tabs[1]:
                 merged["Ticker"] = merged["Ticker"].fillna("").str.upper()
                 merged["DisplayTicker"] = merged["DisplayTicker"].fillna(merged["Ticker"])
 
+                # The map files go stale (new listings, ISIN changes), so fall back to the broker's symbol
+                unresolved = []
+                for i in merged.index[merged["Ticker"] == ""]:
+                    symbol = merged.at[i, "Symbol"] if "Symbol" in merged.columns else None
+                    symbol = str(symbol).strip().upper() if pd.notna(symbol) else ""
+                    resolved = resolve_yf_ticker(symbol) if symbol else None
+                    if resolved:
+                        merged.at[i, "Ticker"] = resolved
+                        merged.at[i, "DisplayTicker"] = symbol
+                    else:
+                        unresolved.append(f"{symbol} ({merged.at[i, 'ISIN']})" if symbol else str(merged.at[i, "ISIN"]))
+                st.session_state["unresolved_holdings"] = unresolved
+
                 st.session_state["base_df"] = merged[["Ticker","DisplayTicker","Current Qty"]].rename(
                     columns={"Current Qty":"Quantity"}
                 )
-                st.session_state["changes_df"] = pd.DataFrame(columns=["Action","Ticker","Quantity"])
+                st.session_state["changes_editor_version"] = st.session_state.get("changes_editor_version", 0) + 1
                 st.session_state["base_src"] = source_name
             except Exception as e:
                 st.error(f"Error processing files: {str(e)}")
@@ -697,6 +723,8 @@ with tabs[1]:
         display_map = dict(zip(base_df["Ticker"], base_df["DisplayTicker"]))
 
         st.subheader("Table 1: Base Portfolio")
+        if st.session_state.get("unresolved_holdings"):
+            st.warning("Could not find a ticker for these holdings, so enter them manually in Table 1: " + ", ".join(st.session_state["unresolved_holdings"]))
         base_edited = st.data_editor(
             base_df[["Ticker","Quantity"]],
             num_rows="dynamic",
@@ -705,19 +733,24 @@ with tabs[1]:
         )
         st.subheader("Table 2: Add/Remove Instructions")
         if st.button("Reset Changes", key="reset_changes"):
-            st.session_state["changes_df"] = pd.DataFrame(columns=["Action","Ticker","Quantity"])
+            st.session_state["changes_editor_version"] = st.session_state.get("changes_editor_version", 0) + 1
             st.success("Reset")
+        # The input must stay the same between reruns: data_editor's identity includes its data,
+        # so passing the edited result back in would discard the next edit. Clear it by changing the key.
         changes = st.data_editor(
-            st.session_state["changes_df"],
+            pd.DataFrame({
+                "Action": pd.Series(dtype="object"),
+                "Ticker": pd.Series(dtype="object"),
+                "Quantity": pd.Series(dtype="float64")
+            }),
             column_config={
                 "Action": st.column_config.SelectboxColumn("Action", options=["add","remove"]),
                 "Ticker": st.column_config.TextColumn("Ticker"),
                 "Quantity": st.column_config.NumberColumn("Quantity", format="%d")
             },
             num_rows="dynamic",
-            key="changes_editor"
+            key=f"changes_editor_{st.session_state.get('changes_editor_version', 0)}"
         )
-        st.session_state["changes_df"] = changes
 
         base = base_edited.rename(columns={"Quantity":"Current Qty"})
         ops = changes.fillna({"Action":"","Ticker":"","Quantity":0}).groupby(["Action","Ticker"], as_index=False)["Quantity"].sum()
@@ -810,11 +843,11 @@ with tabs[1]:
             rc1, rc2 = st.columns(2)
             with rc1:
                 st.markdown("**Base Portfolio**")
-                plot_return_contributions_by_stock(base_ind, rf2, display_map, key="rc_base")
+                plot_return_contributions_by_stock(base_ind, display_map, key="rc_base")
             with rc2:
                 st.markdown("**Active Portfolio**")
                 if changed:
-                    plot_return_contributions_by_stock(act_ind, rf2, display_map, key="rc_act")
+                    plot_return_contributions_by_stock(act_ind, display_map, key="rc_act")
                 else:
                     st.info("No changes → same as base.")
 
